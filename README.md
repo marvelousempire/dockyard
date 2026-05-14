@@ -117,12 +117,14 @@ dockyard/
 Same shape as `clinic/`. Eventually extracted to its own GitHub repo
 (`marvelousempire/dockyard`) — same path the Clinic is on.
 
-## Why this exists in `claude-chat-reader/`
+## Provenance
 
-It's seeded here because (a) this repo is where the Colima decision was
-made and documented, (b) the Clinic precedent shows the pattern works,
-(c) Marvin already runs `claude-chat-reader` daily so the muscle memory
-is here. Once V0 ships and stabilizes, Dockyard moves to its own repo.
+Dockyard was incubated inside
+[marvelousempire/claude-chat-reader](https://github.com/marvelousempire/claude-chat-reader)
+(plans 0011 → 0014) and graduated to this standalone repo at
+**v0.3.1**. The parent repo now references this one as a git
+submodule. Same shape as the
+[Clinic](https://github.com/marvelousempire/clinic).
 
 ## Read next
 

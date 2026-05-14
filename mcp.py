@@ -12,7 +12,7 @@ the python script::
       "mcpServers": {
         "dockyard": {
           "command": "python3",
-          "args": ["/Users/you/Developer/claude-chat-reader/dockyard/mcp.py"]
+          "args": ["/path/to/dockyard/mcp.py"]
         }
       }
     }

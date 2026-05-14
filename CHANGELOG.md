@@ -1,5 +1,11 @@
 # Changelog — Dockyard
 
+> **Provenance:** Extracted from
+> [marvelousempire/claude-chat-reader](https://github.com/marvelousempire/claude-chat-reader/tree/main/dockyard)
+> at v0.3.1. Plans 0011–0014 in that repo's `plans/` folder document the
+> origin. Future development happens here.
+
+
 All notable changes to Dockyard are recorded here.
 Versioning follows [SemVer](https://semver.org/).
 

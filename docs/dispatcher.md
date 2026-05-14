@@ -45,7 +45,7 @@ pnpm dispatch "list my running containers" \
   "mcpServers": {
     "dockyard": {
       "command": "python3",
-      "args": ["/Users/<you>/Developer/claude-chat-reader/dockyard/mcp.py"]
+      "args": ["/path/to/dockyard/mcp.py"]
     }
   }
 }
@@ -68,7 +68,7 @@ Cursor reads the same MCP config shape:
   "mcpServers": {
     "dockyard": {
       "command": "python3",
-      "args": ["/Users/<you>/Developer/claude-chat-reader/dockyard/mcp.py"]
+      "args": ["/path/to/dockyard/mcp.py"]
     }
   }
 }
