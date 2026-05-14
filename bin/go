@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+# dockyard/bin/go — one-keystroke boot from zero to Dockyard running
+#                   on localhost AND Wi-Fi LAN, with the browser open.
+#
+# What it does (idempotent — safe to re-run):
+#   1. Triage the current Docker engine state
+#   2. If Docker Desktop is hung: quit it + sweep stale vsock files
+#   3. If Colima is missing: install via Homebrew (with consent)
+#   4. Start Colima if not running
+#   5. Probe the socket is reachable (/_ping)
+#   6. Launch Dockyard on 0.0.0.0:<PORT> (visible on LAN by default)
+#   7. Open the browser at localhost
+#   8. Print a banner with both localhost AND network URLs
+#
+# Knobs:
+#   DOCKYARD_HOST=127.0.0.1  → localhost only (no Wi-Fi exposure)
+#   DOCKYARD_PORT=4500       → override port
+#   DOCKYARD_NO_BROWSER=1    → don't open browser
+#   DOCKYARD_FORCE_SWEEP=1   → sweep DD even if it appears healthy
+#
+# Usage:
+#   bash dockyard/bin/go
+#   make -C dockyard ui
+#   pnpm dockyard:ui
+
+set -u
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$HERE" || exit 1
+
+# ── Colors ──────────────────────────────────────────────────────────
+if [ -t 1 ]; then
+  G=$'\033[32m'; R=$'\033[31m'; Y=$'\033[33m'; B=$'\033[36m'
+  M=$'\033[35m'; D=$'\033[2m'; W=$'\033[1m'; N=$'\033[0m'
+else
+  G=""; R=""; Y=""; B=""; M=""; D=""; W=""; N=""
+fi
+
+step() { printf "\n${B}${W}▸ %s${N}\n" "$1"; }
+ok()   { printf "  ${G}✅${N} %s\n" "$1"; }
+warn() { printf "  ${Y}⚠${N}  %s\n" "$1"; }
+fail() { printf "  ${R}❌${N} %s\n" "$1"; }
+note() { printf "  ${D}%s${N}\n" "$1"; }
+
+# ── Config ──────────────────────────────────────────────────────────
+PORT=$(python3 -c "import json,sys; sys.stdout.write(str(json.load(open('dockyard.config.json')).get('port',4321)))" 2>/dev/null || echo 4321)
+PORT="${DOCKYARD_PORT:-$PORT}"
+HOST="${DOCKYARD_HOST:-0.0.0.0}"
+LAN_IP=""
+ENGINE="unknown"
+SOCKET=""
+
+# ── 1. LAN IP detection ─────────────────────────────────────────────
+detect_lan_ip() {
+  if command -v ipconfig >/dev/null 2>&1; then
+    for iface in en0 en1 en2 en3; do
+      ip=$(ipconfig getifaddr "$iface" 2>/dev/null || true)
+      if [ -n "$ip" ]; then LAN_IP="$ip"; return; fi
+    done
+  fi
+  LAN_IP=$(python3 - <<'PY' 2>/dev/null || true
+import socket
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    print(s.getsockname()[0])
+    s.close()
+except Exception:
+    print("")
+PY
+)
+}
+
+# ── 2. Engine triage ────────────────────────────────────────────────
+detect_engine() {
+  # Colima first (preferred — PRD 0011)
+  if command -v colima >/dev/null 2>&1; then
+    if colima status 2>&1 | grep -qi "running"; then
+      ENGINE="colima"
+      SOCKET="$HOME/.colima/default/docker.sock"
+      return
+    fi
+  fi
+  # Docker Desktop
+  local dd_sock="$HOME/Library/Containers/com.docker.docker/Data/docker.raw.sock"
+  if [ -S "$dd_sock" ]; then
+    if curl -fsS --max-time 3 --unix-socket "$dd_sock" http://localhost/_ping >/dev/null 2>&1; then
+      ENGINE="docker-desktop"
+      SOCKET="$dd_sock"
+      return
+    fi
+    ENGINE="docker-desktop-hung"
+    SOCKET="$dd_sock"
+    return
+  fi
+  # OrbStack
+  local orb_sock="$HOME/.orbstack/run/docker.sock"
+  if [ -S "$orb_sock" ]; then
+    if curl -fsS --max-time 3 --unix-socket "$orb_sock" http://localhost/_ping >/dev/null 2>&1; then
+      ENGINE="orbstack"; SOCKET="$orb_sock"; return
+    fi
+  fi
+  # Linux native
+  if [ -S /var/run/docker.sock ]; then
+    if curl -fsS --max-time 3 --unix-socket /var/run/docker.sock http://localhost/_ping >/dev/null 2>&1; then
+      ENGINE="native"; SOCKET=/var/run/docker.sock; return
+    fi
+  fi
+  ENGINE="none"
+}
+
+# ── 3. Sweep hung Docker Desktop ────────────────────────────────────
+sweep_docker_desktop() {
+  warn "Docker Desktop is hung — sweeping"
+  # Quit gracefully first
+  osascript -e 'quit app "Docker"' >/dev/null 2>&1 || true
+  sleep 1
+  # Force-kill stragglers
+  for proc in "Docker Desktop" "com.docker.backend" "com.docker.dev-envs" \
+              "com.docker.virtualization" "com.docker.helper" "com.docker.vmnetd"; do
+    pkill -9 -f "$proc" 2>/dev/null || true
+  done
+  # Wipe stale vsock files (the actual culprit on Tahoe + Apple Silicon)
+  local data_root="$HOME/Library/Containers/com.docker.docker/Data"
+  rm -f "$data_root/vms/0/00000002.shutdown" 2>/dev/null || true
+  rm -f "$data_root/vms/0/00000002.sock"     2>/dev/null || true
+  # Wipe the raw socket so auto-detect skips it next time
+  rm -f "$data_root/docker.raw.sock" 2>/dev/null || true
+  ok "Docker Desktop processes killed and stale sockets cleared"
+}
+
+# ── 4. Quit DD gracefully when it's healthy ─────────────────────────
+quit_docker_desktop_gracefully() {
+  note "Docker Desktop is running — quitting it so Colima can take over"
+  osascript -e 'quit app "Docker"' >/dev/null 2>&1 || true
+  sleep 2
+  pkill -9 -f "com.docker.backend" 2>/dev/null || true
+  ok "Docker Desktop stopped"
+}
+
+# ── 5. Ensure Colima is installed ───────────────────────────────────
+ensure_colima() {
+  if command -v colima >/dev/null 2>&1; then return 0; fi
+  warn "Colima not installed"
+  if ! command -v brew >/dev/null 2>&1; then
+    fail "Homebrew not found"
+    echo ""
+    echo "    Install Homebrew first:"
+    echo "      ${W}/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${N}"
+    echo ""
+    echo "    Then re-run: ${W}make -C dockyard ui${N}"
+    return 1
+  fi
+  if [ -t 0 ]; then
+    printf "  ${Y}?${N} Install Colima now via Homebrew? [Y/n] "
+    read -r REPLY
+    REPLY="${REPLY:-Y}"
+    case "$REPLY" in
+      [Yy]*) ;;
+      *) note "Skipped. Run: brew install colima docker docker-compose"; return 1 ;;
+    esac
+  else
+    note "Non-interactive shell — installing without prompt"
+  fi
+  step "Installing Colima + docker CLI"
+  brew install colima docker docker-compose || { fail "brew install failed"; return 1; }
+  ok "Colima installed"
+}
+
+# ── 6. Start Colima ─────────────────────────────────────────────────
+start_colima() {
+  if colima status 2>&1 | grep -qi "running"; then
+    ok "Colima already running"
+  else
+    step "Starting Colima (this takes ~30s on first boot)"
+    colima start --cpu 4 --memory 6 --disk 60 \
+      || { fail "colima start failed"; return 1; }
+    ok "Colima started"
+  fi
+  ENGINE="colima"
+  SOCKET="$HOME/.colima/default/docker.sock"
+}
+
+# ── 7. Probe the socket ─────────────────────────────────────────────
+probe_socket() {
+  if curl -fsS --max-time 3 --unix-socket "$SOCKET" http://localhost/_ping >/dev/null 2>&1; then
+    ok "Engine socket reachable: $(basename "$SOCKET")"
+    return 0
+  fi
+  fail "Socket not reachable: $SOCKET"
+  note "Try: colima restart"
+  return 1
+}
+
+# ── 8. Boot Dockyard server ─────────────────────────────────────────
+boot_dockyard() {
+  # If already up on this port, skip the relaunch
+  if curl -fsS --max-time 1 "http://127.0.0.1:$PORT/api/config" >/dev/null 2>&1; then
+    ok "Dockyard already running on port $PORT"
+    return 0
+  fi
+  # Kill any prior instance bound to a different port
+  pkill -f "dockyard/server.py" 2>/dev/null || true
+  sleep 0.5
+  step "Starting Dockyard server"
+  local logfile="/tmp/dockyard-$$.log"
+  nohup python3 -u "$HERE/server.py" --port "$PORT" --host "$HOST" --no-open \
+    > "$logfile" 2>&1 &
+  DY_PID=$!
+  disown 2>/dev/null || true
+  # Wait for bind (up to 5s)
+  for i in 1 2 3 4 5; do
+    if curl -fsS --max-time 1 "http://127.0.0.1:$PORT/api/config" >/dev/null 2>&1; then
+      ok "Dockyard up on port $PORT (PID $DY_PID, log: $logfile)"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Dockyard failed to start — log tail:"
+  tail -20 "$logfile" | sed 's/^/      /'
+  return 1
+}
+
+# ── 9. Open browser ─────────────────────────────────────────────────
+open_browser() {
+  [ -n "${DOCKYARD_NO_BROWSER:-}" ] && return 0
+  local URL="http://127.0.0.1:$PORT"
+  if command -v open >/dev/null; then
+    (sleep 0.4 && open "$URL") &
+  elif command -v xdg-open >/dev/null; then
+    (sleep 0.4 && xdg-open "$URL") &
+  fi
+}
+
+# ── Banner ──────────────────────────────────────────────────────────
+print_banner() {
+  echo ""
+  printf "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}\n"
+  echo ""
+  printf "  🚢  ${W}Dockyard${N}\n"
+  echo ""
+  printf "  ${W}URL${N}        http://127.0.0.1:$PORT\n"
+  if [ -n "$LAN_IP" ] && [ "$HOST" = "0.0.0.0" ]; then
+    printf "  ${W}Network${N}    http://$LAN_IP:$PORT  ${D}(reachable on your Wi-Fi)${N}\n"
+  fi
+  printf "  ${W}Engine${N}     %s\n" "$ENGINE"
+  printf "  ${W}Socket${N}     %s\n" "$SOCKET"
+  echo ""
+  if [ -n "$LAN_IP" ] && [ "$HOST" = "0.0.0.0" ]; then
+    printf "  ${D}Network exposure: lock down with ${W}DOCKYARD_HOST=127.0.0.1${N}${D} or ${W}make -C dockyard ui-local${N}\n"
+  fi
+  printf "  ${D}Stop with: ${W}pkill -f 'dockyard/server.py'${N}${D}    Logs: tail -f /tmp/dockyard-*.log${N}\n"
+  echo ""
+  printf "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}\n"
+  echo ""
+}
+
+# ── Main ────────────────────────────────────────────────────────────
+echo ""
+printf "${B}${W}🚢  Dockyard — boot from zero${N}\n"
+printf "${D}    plan 0014 · idempotent · safe to re-run${N}\n"
+
+detect_lan_ip
+
+step "Triage"
+detect_engine
+note "Current engine: $ENGINE"
+
+case "$ENGINE" in
+  colima)
+    ok "Colima already up — nothing to heal"
+    ;;
+  docker-desktop)
+    if [ -n "${DOCKYARD_FORCE_SWEEP:-}" ]; then
+      sweep_docker_desktop
+      ensure_colima && start_colima || exit 1
+    else
+      warn "Docker Desktop is running"
+      note "Per Plan 0011 we prefer Colima. Quitting Docker Desktop and switching."
+      quit_docker_desktop_gracefully
+      ensure_colima && start_colima || exit 1
+    fi
+    ;;
+  docker-desktop-hung)
+    sweep_docker_desktop
+    ensure_colima && start_colima || exit 1
+    ;;
+  orbstack)
+    ok "Using existing OrbStack"
+    ;;
+  native)
+    ok "Using native /var/run/docker.sock"
+    ;;
+  none)
+    warn "No Docker engine present"
+    ensure_colima && start_colima || exit 1
+    ;;
+  *)
+    fail "Unknown engine state: $ENGINE"; exit 1 ;;
+esac
+
+probe_socket || { fail "Engine started but socket not reachable"; exit 1; }
+
+boot_dockyard || exit 1
+
+print_banner
+open_browser
+
+exit 0

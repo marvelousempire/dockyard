@@ -17,13 +17,15 @@ PORT     ?= $(shell python3 -c "import json,sys; sys.stdout.write(str(json.load(
 PY       ?= python3
 HERE     := $(shell pwd)
 
-.PHONY: help run ui ui-local open doctor test test-unit test-integration mcp clean status docker-build docker-run
+.PHONY: help boot ui ui-local run open doctor test test-unit test-integration mcp clean status docker-build docker-run
 
 help:
 	@echo "Dockyard targets (port=$(PORT)):"
-	@echo "  make run            Start server, NO browser (logs in foreground)"
-	@echo "  make ui             Start server + open browser"
-	@echo "  make ui-local       127.0.0.1 only, no browser open"
+	@echo "  ${YELLOW}make ui${RESET}             ${BOLD}One-keystroke boot from zero${RESET} — heals Docker Desktop"
+	@echo "                       hangs, installs/starts Colima if needed, opens"
+	@echo "                       browser, exposes on Wi-Fi LAN (alias: make boot)"
+	@echo "  make ui-local       Same as ui, but bind to 127.0.0.1 only"
+	@echo "  make run            Bare server, NO heal/install/browser (for CI)"
 	@echo "  make open           Open existing server's URL in browser (does not start)"
 	@echo "  make doctor         Check host + engine + socket; offers fixes"
 	@echo "  make test           Run unit + integration tests"
@@ -35,14 +37,16 @@ help:
 	@echo "  make docker-run     Run dockyard in a container against host socket"
 	@echo "  make clean          Remove pycache + test artifacts"
 
-run:
-	@$(PY) server.py --port $(PORT) --no-open
-
-ui:
-	@$(PY) server.py --port $(PORT)
+# THE entry point — heals + installs + starts engine, then Dockyard, opens browser.
+ui boot:
+	@bash bin/go
 
 ui-local:
-	@$(PY) server.py --port $(PORT) --host 127.0.0.1 --no-open
+	@DOCKYARD_HOST=127.0.0.1 bash bin/go
+
+# Bare server — no heal, no install, no browser. For scripts / CI / debugging.
+run:
+	@$(PY) server.py --port $(PORT) --no-open
 
 open:
 	@URL="http://127.0.0.1:$(PORT)"; \

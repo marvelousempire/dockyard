@@ -12,9 +12,21 @@ See **[PRD.md](./PRD.md)** for the design and **[CHANGELOG.md](./CHANGELOG.md)**
 for what's in.
 
 ```bash
-# Local — fastest path
-make -C dockyard doctor    # check engine + socket; offers fixes
-make -C dockyard ui        # start + open browser at :4321
+# THE one command (heals Docker Desktop hangs, installs Colima if
+# missing, starts the engine, boots Dockyard, opens browser, exposes
+# on Wi-Fi LAN). Idempotent — safe to re-run.
+make -C dockyard ui
+#   ⮕ http://127.0.0.1:4321        (localhost)
+#   ⮕ http://192.168.x.y:4321      (your Wi-Fi LAN)
+
+# Localhost only (no Wi-Fi exposure)
+make -C dockyard ui-local
+
+# Bare server, no heal / install / browser (for CI / scripts)
+make -C dockyard run
+
+# Just diagnose
+make -C dockyard doctor
 
 # Or as a Compose service
 docker compose up -d dockyard
@@ -23,6 +35,27 @@ open https://localhost:4322   # Caddy HTTPS front-door
 # Or from any AI agent (MCP)
 pnpm dockyard:mcp <<<'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
+
+### What `make ui` does (Plan 0014)
+
+It's the heal-then-boot path: one command, zero manual steps.
+
+1. **Triage** the Docker engine state (Colima / OrbStack / Docker
+   Desktop / native / nothing)
+2. **Heal** if Docker Desktop is hung — quit it, sweep stale vsock
+   files
+3. **Install** Colima via Homebrew if missing (with consent prompt)
+4. **Start** Colima with sensible defaults (4 CPU / 6 GB / 60 GB)
+5. **Probe** the socket reachability
+6. **Boot** Dockyard on `0.0.0.0:4321` (Wi-Fi visible)
+7. **Open** the browser at localhost
+8. **Print** both URLs so you can hand the Wi-Fi one to another device
+
+Knobs:
+- `DOCKYARD_HOST=127.0.0.1` — localhost only
+- `DOCKYARD_PORT=4500` — override port
+- `DOCKYARD_NO_BROWSER=1` — skip browser
+- `DOCKYARD_FORCE_SWEEP=1` — sweep DD even when it looks healthy
 
 ### What ships in v0.3.0
 

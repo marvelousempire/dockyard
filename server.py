@@ -563,14 +563,51 @@ class DockyardHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 
-def _ascii_banner(name: str, url: str, engine: str, version: Optional[str]) -> str:
+def _lan_ip() -> Optional[str]:
+    """Best-effort detection of the LAN-facing IP without resolving DNS."""
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # 8.8.8.8 is just a routing hint; nothing is actually sent.
+        s.connect(("8.8.8.8", 80))
+        return str(s.getsockname()[0])
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _ascii_banner(
+    name: str,
+    url: str,
+    engine: str,
+    version: Optional[str],
+    *,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+) -> str:
     engine_label = f"{engine}" + (f" {version}" if version else "")
+    network_line = ""
+    if host == "0.0.0.0" and port is not None:
+        ip = _lan_ip()
+        if ip:
+            network_line = f"  Network   http://{ip}:{port}  (reachable on your Wi-Fi)\n"
+    mode = (
+        "Localhost + Wi-Fi · press Ctrl+C to stop"
+        if host == "0.0.0.0"
+        else "Localhost · press Ctrl+C to stop"
+    )
     return (
         "\n"
         f"  🚢  {name}\n\n"
         f"  URL       {url}\n"
+        f"{network_line}"
         f"  Engine    {engine_label}\n"
-        f"  Mode      Localhost · press Ctrl+C to stop\n\n"
+        f"  Mode      {mode}\n\n"
     )
 
 
@@ -608,6 +645,8 @@ def main(argv: Optional[list] = None) -> int:
             url,
             engine,
             None,  # version filled in async
+            host=args.host,
+            port=port,
         )
     )
     sys.stdout.flush()

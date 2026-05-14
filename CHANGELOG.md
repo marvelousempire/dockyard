@@ -84,6 +84,43 @@ starts at v0.2.0.
 
 ---
 
+## [0.3.1] — 2026-05-14
+
+### Added (Plan 0014) — one-keystroke boot from zero
+
+- **`bin/go`** — heal-then-boot script. `make -C dockyard ui` now
+  routes through this. Single command takes the machine from:
+  - Docker Desktop hung? → quits it, sweeps stale vsock files
+  - Docker Desktop running? → quits it, switches to Colima (per PRD 0011)
+  - No engine at all? → installs Colima via Homebrew (with consent)
+  - Colima not started? → `colima start --cpu 4 --memory 6 --disk 60`
+  - Engine reachable? → probe `/_ping` to confirm
+  - Then boots Dockyard on `0.0.0.0:4321` (Wi-Fi + localhost), opens
+    the browser, prints both URLs.
+- **Banner now shows Network URL** when bound to `0.0.0.0` — detects
+  LAN IP via `ipconfig getifaddr en0` (macOS) or
+  `socket.connect(8.8.8.8:80)` (cross-platform).
+- **`make ui-local`** — same boot flow with `DOCKYARD_HOST=127.0.0.1`
+  for users who don't want LAN exposure.
+- **`make boot`** — alias for `make ui` (more explicit name).
+- **`make run`** retained as the bare-server path (no heal, no
+  install, no browser) for CI / debugging.
+- **`DOCKYARD_FORCE_SWEEP=1`** env var to force the Docker Desktop
+  sweep even when DD appears healthy (escape hatch for partial hangs).
+- **`DOCKYARD_NO_BROWSER=1`** env var to skip opening the browser.
+
+### Verification
+
+```
+make -C dockyard ui           # → heals DD, installs Colima if missing,
+                              #   starts Colima, boots Dockyard, opens browser,
+                              #   shows http://127.0.0.1:4321 + http://<lan-ip>:4321
+make -C dockyard ui-local     # → same but localhost only
+make -C dockyard ui           # → re-run idempotent: "already running" + open browser
+```
+
+---
+
 ## [0.3.0] — 2026-05-14
 
 The gap+elevation pass. All 8 gaps closed and all 8 elevations
