@@ -11,8 +11,11 @@
   },
   "ui": {
     "default_view": "compose",
+    "default_theme": "auto",
     "refresh_ms": 2000,
-    "logs_tail_lines": 200
+    "logs_tail_lines": 200,
+    "sparkline_seconds": 30,
+    "show_ai_assist": true
   },
   "_comment": "socket=auto probes Colima -> OrbStack -> Docker Desktop -> /var/run/docker.sock. Set to an explicit path to pin (e.g. /Users/you/.colima/team/docker.sock)."
 }

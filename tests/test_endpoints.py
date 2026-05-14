@@ -48,11 +48,97 @@ def _docker_ok(socket_path: str) -> bool:
         return False
 
 
-class TestEndpoints(unittest.TestCase):
-    """Boot the server once for the whole class."""
+def _start_server(socket_path: str, engine: str) -> tuple[ThreadingHTTPServer, str]:
+    """Boot the server on a free port. Returns (server, base_url)."""
+    DockyardHandler.socket_path = socket_path
+    DockyardHandler.engine = engine
+    DockyardHandler.config = {}
+    port = _free_port()
+    server = ThreadingHTTPServer(("127.0.0.1", port), DockyardHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    time.sleep(0.1)
+    return server, f"http://127.0.0.1:{port}"
+
+
+class TestServerOnly(unittest.TestCase):
+    """Server-side endpoints that DON'T require a reachable Docker engine.
+
+    Plan 0013 added /api/config, /api/sockets, /api/socket/swap, static
+    favicon — all served by Dockyard itself. These should pass even
+    when Docker is dead.
+    """
 
     server: "ThreadingHTTPServer | None" = None
-    thread: "threading.Thread | None" = None
+    base: str = ""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        # Use a sentinel path; these tests don't talk to Docker
+        cls.server, cls.base = _start_server(
+            "/var/run/nonexistent-docker.sock", "test"
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls.server is not None:
+            cls.server.shutdown()
+            cls.server.server_close()
+
+    def _get_json(self, path: str, timeout: float = 5.0):
+        with urllib.request.urlopen(self.base + path, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read())
+
+    def test_config_endpoint(self) -> None:
+        """Plan 0013 Track G1 — /api/config returns merged config + runtime."""
+        status, body = self._get_json("/api/config")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["port"], 4321)
+        self.assertIn("branding", body)
+        self.assertIn("accent", body["branding"])
+        self.assertIn("_runtime", body)
+        self.assertIn("engine", body["_runtime"])
+
+    def test_sockets_endpoint(self) -> None:
+        """Plan 0013 Track E-G — /api/sockets enumerates engines."""
+        status, body = self._get_json("/api/sockets")
+        self.assertEqual(status, 200)
+        self.assertIsInstance(body, list)
+        engines = {s["engine"] for s in body}
+        self.assertTrue(
+            {"colima", "orbstack", "docker-desktop", "native"} & engines
+        )
+
+    def test_favicon_served(self) -> None:
+        """Plan 0013 Track G5 — static SVG favicon."""
+        with urllib.request.urlopen(self.base + "/static/favicon.svg", timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertIn("image/svg", resp.getheader("Content-Type") or "")
+
+    def test_socket_swap_validates(self) -> None:
+        """Plan 0013 Track E-G — swap rejects nonexistent path."""
+        req = urllib.request.Request(
+            self.base + "/api/socket/swap",
+            data=json.dumps({"path": "/nonexistent.sock"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            self.fail("expected 404")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 404)
+
+    def test_index_html_served(self) -> None:
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            body = resp.read()
+        self.assertEqual(resp.status, 200)
+        self.assertTrue(body.startswith(b"<!doctype html>") or body.startswith(b"<!DOCTYPE html>"))
+
+
+class TestEndpoints(unittest.TestCase):
+    """Endpoints that DO require a reachable Docker engine."""
+
+    server: "ThreadingHTTPServer | None" = None
     base: str = ""
     skip_reason: str = ""
 
@@ -65,18 +151,7 @@ class TestEndpoints(unittest.TestCase):
         if not _docker_ok(info.path):
             cls.skip_reason = f"docker engine unreachable via {info.path}"
             return
-
-        DockyardHandler.socket_path = info.path
-        DockyardHandler.engine = info.engine
-        DockyardHandler.config = {}
-
-        port = _free_port()
-        cls.server = ThreadingHTTPServer(("127.0.0.1", port), DockyardHandler)
-        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
-        cls.thread.start()
-        cls.base = f"http://127.0.0.1:{port}"
-        # Give the server a beat
-        time.sleep(0.1)
+        cls.server, cls.base = _start_server(info.path, info.engine)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -140,7 +215,6 @@ class TestEndpoints(unittest.TestCase):
             body = resp.read()
         self.assertEqual(resp.status, 200)
         self.assertTrue(body.startswith(b"<!doctype html>") or body.startswith(b"<!DOCTYPE html>"))
-
 
 if __name__ == "__main__":
     unittest.main()

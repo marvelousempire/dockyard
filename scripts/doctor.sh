@@ -93,7 +93,29 @@ elif [ -S "$HOME/Library/Containers/com.docker.docker/Data/docker.raw.sock" ]; t
   check "Docker Desktop socket present" true
 else
   check "any Docker engine installed" false
-  note "fix: brew install colima  (recommended on Apple Silicon)"
+  echo ""
+  echo "  ${Y}🛠️   No engine found. Recommended fix on macOS Apple Silicon:${N}"
+  echo ""
+  echo "    ${B}brew install colima docker docker-compose${N}"
+  echo "    ${B}colima start${N}"
+  echo ""
+  echo "  Alternatives:"
+  echo "    OrbStack:   ${B}brew install orbstack && open -a OrbStack${N}"
+  echo "    Docker Desktop: ${B}brew install --cask docker${N}"
+  echo "    Linux:      ${B}sudo apt install docker.io && sudo systemctl start docker${N}"
+  echo ""
+  # Offer to run it (non-interactive on CI)
+  if [ -t 0 ] && command -v brew >/dev/null 2>&1; then
+    read -r -p "  Install Colima now via Homebrew? [y/N] " REPLY
+    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+      echo "  ${B}Running: brew install colima${N}"
+      if brew install colima docker; then
+        printf '  %s✅%s Colima installed. Run: %scolima start%s, then re-run %smake doctor%s\n' "$G" "$N" "$B" "$N" "$B" "$N"
+      else
+        printf '  %s❌%s install failed — try the manual command above\n' "$R" "$N"
+      fi
+    fi
+  fi
 fi
 echo ""
 

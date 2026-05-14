@@ -77,22 +77,106 @@ starts at v0.2.0.
 
 ### Deferred
 
-- Web terminal (`docker exec` over WebSocket) — moved to v0.3.0.
+- Web terminal (`docker exec` over WebSocket) — moved to v0.4.0.
   Python stdlib doesn't speak WebSocket natively; needs ~200 lines
   of RFC 6455 framing + Docker hijack handling.
 - Webhook outbox for container events — V1.
-- Multi-engine switcher UI — V1.
+
+---
+
+## [0.3.0] — 2026-05-14
+
+The gap+elevation pass. All 8 gaps closed and all 8 elevations
+shipped (Plan 0013) in one delivery.
+
+### Added — gaps closed
+
+- **G1** — Branding accent now read from `dockyard.config.json` and
+  injected as CSS variable. Change `accent` in config → reload UI
+  → every accent shifts.
+- **G2** — `ui.default_theme` honored when no `localStorage` choice
+  exists. `ui.sparkline_seconds` and `ui.show_ai_assist` added.
+- **G3** — Header shows an "engine colima · v0.x.x" pill (full
+  version surfaced, not just the sidebar engine name).
+- **G4** — "+ Pull image" button on the Images view → modal with
+  streaming progress (NDJSON from `/api/images/pull`).
+- **G5** — `web/static/favicon.svg` + `web/static/dockyard.svg`
+  (wordmark). Server's static handler serves them at `/static/…`.
+- **G6** — Makefile clarified. New target `make open` opens the
+  browser at a running server's URL (separate from `make ui` which
+  also starts it). `make docker-build` + `make docker-run` added.
+- **G7** — `make doctor` now prints the one-liner to install Colima,
+  OrbStack, Docker Desktop, or Linux docker.io when no engine
+  exists. Interactive Homebrew install offer when on a TTY.
+- **G8** — Cursor rule (`.mdc`) smoke-test procedure documented in
+  the plan-first manual smoke section of plan 0013.
+
+### Added — elevations shipped
+
+- **E-A** — Live CPU + memory sparklines per container row (SVG,
+  trailing 30 s window, polled via `/api/containers/{id}/stats?stream=0`).
+- **E-B** — "Restart all" button on each Compose project group →
+  `POST /api/projects/{name}/restart` iterates every container in
+  the project.
+- **E-C** — "🤖 Ask Claude why (exit N)" banner on exited
+  containers with non-zero exit codes. Deep-links into the main
+  app's `/ask?q=<prefilled>&autosubmit=1`. Main app's `AskBox`
+  now reads `?q=` and `?autosubmit=1` params.
+- **E-D** — `dockyard/Dockerfile` (slim, ~50 MB). Added as a
+  service in the root `docker-compose.yml`. `caddy/Caddyfile`
+  routes `localhost:4322` → `dockyard:4321` with `tls internal`
+  and standard security headers. `docker compose up dockyard`
+  works.
+- **E-E** — `pnpm dockyard:mcp` script (+ `dockyard`, `dockyard:ui`,
+  `dockyard:doctor`, `dockyard:test`). `docs/dispatcher.md`
+  documents Claude Code / Cursor / generic MCP wiring.
+- **E-F** — Drag-to-prune on the Disk view. Images, volumes, and
+  containers are draggable; a trash zone confirms + deletes.
+- **E-G** — Engine swapper dropdown in the sidebar. Lists every
+  detected engine + active marker; selecting one calls
+  `POST /api/socket/swap` and live-switches the runtime socket
+  without restart.
+- **E-H** — Plan-first rule smoke test procedure documented in
+  plan 0013 + this changelog. Manual verification: open new
+  Claude Code chat, ask for a substantive change, expect plan
+  mode auto-entry.
+
+### Added — server endpoints
+
+- `GET /api/config` — runtime config + `_runtime: {engine, socket}`.
+- `GET /api/sockets` — every detected engine with `active` /
+  `reachable` flags.
+- `POST /api/socket/swap` — swap active socket at runtime (probes
+  /_ping before committing).
+- `POST /api/projects/{name}/restart` — restart every container in
+  a Compose project.
+
+### Internal
+
+- Server's startup probe moved AFTER port bind so banner + first
+  HTTP response land in <1 s even when the engine is hung.
+- Test suite split into `TestServerOnly` (no docker needed) and
+  `TestEndpoints` (skips when docker is unreachable). 20 tests pass
+  on any machine, 7 more pass when docker is up.
+
+### Verification
+
+```
+make -C dockyard test            # 20 ok, 7 skipped (no docker)
+make -C dockyard doctor           # diagnoses + offers fixes
+python3 -u dockyard/server.py     # banner < 1s, port bound
+pnpm exec tsc --noEmit            # clean
+```
 
 ---
 
 ## Upcoming
 
-### [0.3.0] — planned
+### [0.4.0] — planned
 
 - Web terminal (`docker exec` over WebSocket).
-- Engine switcher (Colima ↔ OrbStack ↔ Docker Desktop) UI.
-- Image-pull progress in the UI.
-- Container env / resource limit edit.
+- Container env / resource-limit editor.
+- Image-pull progress with cancel.
 
 ### [1.0.0] — planned
 

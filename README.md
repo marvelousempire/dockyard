@@ -6,16 +6,39 @@
 
 ## Status
 
-**V0 (v0.2.0) — runnable.** Server, UI, socket auto-detect, doctor,
-MCP, tests, Caddyfile snippet — all shipped (Plan 0012). Web-terminal
-exec deferred to v0.3.0. See **[PRD.md](./PRD.md)** for the design and
-**[CHANGELOG.md](./CHANGELOG.md)** for what's in.
+**V0.3 (v0.3.0) — feature-complete for V0.** Every gap closed, every
+elevation shipped (Plan 0013). Web terminal exec deferred to v0.4.0.
+See **[PRD.md](./PRD.md)** for the design and **[CHANGELOG.md](./CHANGELOG.md)**
+for what's in.
 
 ```bash
-make -C dockyard doctor   # check engine + socket
-make -C dockyard run      # start on :4321
-open http://127.0.0.1:4321
+# Local — fastest path
+make -C dockyard doctor    # check engine + socket; offers fixes
+make -C dockyard ui        # start + open browser at :4321
+
+# Or as a Compose service
+docker compose up -d dockyard
+open https://localhost:4322   # Caddy HTTPS front-door
+
+# Or from any AI agent (MCP)
+pnpm dockyard:mcp <<<'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
+
+### What ships in v0.3.0
+
+- Container / image / volume / network management with status pills
+- **Compose-project view** as the default landing screen
+- **Live CPU + memory sparklines** per running container
+- Streaming logs (chunked HTTP) + image-pull progress (NDJSON)
+- **Drag-to-prune** on the Disk view (images, volumes, containers)
+- **Engine swapper** — switch Colima ↔ OrbStack ↔ Docker Desktop
+  without restart
+- **"Ask Claude why"** banner on exited containers — deep-links to
+  the main app's `/ask` with logs prefilled
+- **MCP server** with 12 tools for AI agents
+- `make doctor` with auto-install offer for missing engines
+- Caddy HTTPS front-door (`https://localhost:4322`)
+- Auto/Light/Dark theme + accent driven by `dockyard.config.json`
 
 ## The five-second pitch
 

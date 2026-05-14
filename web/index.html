@@ -4,12 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dockyard</title>
-  <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='52'>🚢</text></svg>" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    // Pre-paint theme — applied BEFORE Tailwind class scan to avoid flash.
+    // Pre-paint theme — runs BEFORE Tailwind so first paint is correct.
+    // Reads localStorage first, falls back to /api/config default_theme,
+    // falls back to "auto".
     (function () {
-      const saved = localStorage.getItem("dockyard.theme") || "auto";
+      let saved = localStorage.getItem("dockyard.theme") || "auto";
       const sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
       const isDark = saved === "dark" || (saved === "auto" && sysDark);
       document.documentElement.classList.toggle("dark", isDark);
@@ -20,6 +22,7 @@
       theme: {
         extend: {
           colors: {
+            // Defaults — overridden by /api/config branding.accent at runtime
             accent: "#0E7C66",
             "accent-2": "#11A488",
             ink: "#0B1115",
@@ -38,6 +41,7 @@
     };
   </script>
   <style>
+    :root { --dy-accent: #0E7C66; --dy-accent-2: #11A488; }
     html, body { height: 100%; }
     body { font-family: ui-sans-serif, system-ui, sans-serif; }
     .pill { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium; }
@@ -45,35 +49,45 @@
     .pill-red   { @apply pill bg-rose-500/15 text-rose-700 dark:text-rose-300; }
     .pill-amber { @apply pill bg-amber-500/15 text-amber-800 dark:text-amber-300; }
     .pill-zinc  { @apply pill bg-zinc-500/15 text-zinc-700 dark:text-zinc-300; }
-    .pill-accent { @apply pill bg-accent/15 text-accent dark:text-accent-2; }
+    .pill-accent { @apply pill; background: color-mix(in srgb, var(--dy-accent) 15%, transparent); color: var(--dy-accent); }
     .btn { @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-md border border-line dark:border-line-dark hover:bg-paper-2 dark:hover:bg-ink-2 transition-colors; }
-    .btn-primary { @apply btn bg-accent text-white border-accent hover:bg-accent-2; }
+    .btn-primary { @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-md text-white border transition-colors; background: var(--dy-accent); border-color: var(--dy-accent); }
+    .btn-primary:hover { background: var(--dy-accent-2); }
     .btn-danger { @apply btn text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30; }
     .surface { @apply bg-white dark:bg-ink-2 border border-line dark:border-line-dark rounded-lg; }
     .surface-subtle { @apply bg-paper dark:bg-ink rounded-md; }
     .nav-item { @apply flex items-center gap-2 px-3 py-2 rounded-md text-sm text-zinc-700 dark:text-zinc-300 hover:bg-paper-2 dark:hover:bg-ink-2 cursor-pointer transition-colors; }
-    .nav-item.active { @apply bg-accent/10 text-accent dark:text-accent-2 font-medium; }
+    .nav-item.active { background: color-mix(in srgb, var(--dy-accent) 12%, transparent); color: var(--dy-accent); font-weight: 500; }
     .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-    /* Logs panel */
     .logs-pane { @apply mono text-[12px] leading-snug whitespace-pre-wrap p-3 max-h-[60vh] overflow-y-auto bg-ink text-emerald-200 dark:bg-black; }
-    /* Theme segmented control */
     .theme-seg { @apply flex items-center rounded-md border border-line dark:border-line-dark p-0.5 text-[11px]; }
     .theme-seg button { @apply px-2 py-1 rounded; }
-    .theme-seg button.on { @apply bg-accent text-white; }
-    /* Hide scrollbars on the sidebar but allow scrolling */
+    .theme-seg button.on { background: var(--dy-accent); color: white; }
     .sidebar::-webkit-scrollbar { width: 6px; }
     .sidebar::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.25); border-radius: 3px; }
+    .ver-pill { @apply pill text-[10px] mono; background: color-mix(in srgb, var(--dy-accent) 12%, transparent); color: var(--dy-accent); }
+    /* Sparkline */
+    .spark { width: 70px; height: 22px; vertical-align: middle; }
+    .spark-cpu { stroke: var(--dy-accent); }
+    .spark-mem { stroke: #f59e0b; }
+    /* Drag-to-prune */
+    .trash-zone { @apply border-2 border-dashed rounded-lg p-4 text-center text-sm transition-colors; border-color: var(--dy-accent); }
+    .trash-zone.over { background: color-mix(in srgb, #f43f5e 18%, transparent); border-color: #f43f5e; color: #be123c; }
+    .draggable { @apply cursor-grab; }
+    .draggable:active { @apply cursor-grabbing; }
+    .ai-assist { @apply text-[12px] flex items-center gap-1; color: var(--dy-accent); }
+    .ai-assist:hover { text-decoration: underline; }
   </style>
 </head>
 <body class="bg-paper text-ink dark:bg-ink dark:text-paper">
   <div id="app" class="min-h-screen flex"></div>
 
   <script>
-    // -------------------------------------------------------------------
-    // Tiny reactive helper — no framework, just signals + render-on-change
-    // -------------------------------------------------------------------
+    // ===================================================================
+    // State
+    // ===================================================================
     const state = {
-      view: "compose",          // compose | containers | images | volumes | networks | disk | settings
+      view: "compose",
       containers: [],
       images: [],
       volumes: [],
@@ -82,23 +96,31 @@
       health: { reachable: null, engine: "?", version: "?" },
       df: null,
       logs: { open: false, id: null, lines: [], abort: null },
+      pull: { open: false, name: "", lines: [], running: false, abort: null },
       busyIds: new Set(),
       lastError: null,
       refreshMs: 2000,
+      config: null,
+      sockets: [],
+      stats: {},          // {containerId: [{cpu:0..1, mem:bytes, t:Date.now()}]}
+      sparkSeconds: 30,
+      askBase: window.location.origin.replace(":4321", ":3000"),  // best-effort
+      mainAppOrigin: null, // resolved from /api/config or env at boot
     };
 
+    // ===================================================================
+    // Utilities
+    // ===================================================================
     function $(html) {
       const tpl = document.createElement("template");
       tpl.innerHTML = html.trim();
       return tpl.content.firstElementChild;
     }
-
     function escapeHTML(s) {
       return (s ?? "").toString()
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     }
-
     function fmtBytes(n) {
       if (n == null || isNaN(n)) return "—";
       if (n < 1024) return n + " B";
@@ -106,7 +128,6 @@
       if (n < 1024**3) return (n/1024**2).toFixed(1) + " MB";
       return (n/1024**3).toFixed(2) + " GB";
     }
-
     function fmtAge(unixSec) {
       if (!unixSec) return "—";
       const s = Math.floor(Date.now()/1000 - unixSec);
@@ -115,30 +136,24 @@
       if (s < 86400) return Math.floor(s/3600) + "h";
       return Math.floor(s/86400) + "d";
     }
-
+    function shortId(id) { return id ? id.slice(0, 12) : ""; }
+    function composeProject(c) { return (c.Labels && c.Labels["com.docker.compose.project"]) || ""; }
+    function composeService(c) { return (c.Labels && c.Labels["com.docker.compose.service"]) || ""; }
+    function imageName(c) { return c.Image || (c.RepoTags && c.RepoTags[0]) || ""; }
+    function exitCode(c) {
+      // ExitCode is in /containers/{id}/json (inspect), not the list. We approximate
+      // from State string: "Exited (137) 5 minutes ago"
+      const m = (c.Status || "").match(/Exited \((-?\d+)\)/);
+      return m ? parseInt(m[1], 10) : null;
+    }
     function statusPill(c) {
       const s = (c.State || "").toLowerCase();
       const cls = s === "running" ? "pill-green"
-                : s === "exited" || s === "dead" ? "pill-red"
+                : (s === "exited" || s === "dead") ? "pill-red"
                 : s === "paused" ? "pill-amber"
                 : "pill-zinc";
       return `<span class="${cls}">${escapeHTML(s || c.Status || "?")}</span>`;
     }
-
-    function shortId(id) { return id ? id.slice(0, 12) : ""; }
-
-    function composeProject(c) {
-      return (c.Labels && c.Labels["com.docker.compose.project"]) || "";
-    }
-
-    function composeService(c) {
-      return (c.Labels && c.Labels["com.docker.compose.service"]) || "";
-    }
-
-    function imageName(c) {
-      return c.Image || (c.RepoTags && c.RepoTags[0]) || "";
-    }
-
     function portsLabel(c) {
       const ps = c.Ports || [];
       if (!ps.length) return "";
@@ -148,9 +163,9 @@
         .join(" ");
     }
 
-    // -------------------------------------------------------------------
+    // ===================================================================
     // API client
-    // -------------------------------------------------------------------
+    // ===================================================================
     async function api(method, path, opts = {}) {
       const res = await fetch(path, { method, ...opts });
       if (!res.ok) {
@@ -161,6 +176,69 @@
       }
       const ct = res.headers.get("content-type") || "";
       return ct.includes("json") ? res.json() : res.text();
+    }
+
+    async function loadConfig() {
+      try {
+        const cfg = await api("GET", "/api/config");
+        state.config = cfg;
+        // Apply branding
+        if (cfg.branding && cfg.branding.accent) {
+          document.documentElement.style.setProperty("--dy-accent", cfg.branding.accent);
+          // Derive a slightly brighter shade for hovers
+          document.documentElement.style.setProperty("--dy-accent-2",
+            mixHex(cfg.branding.accent, "#FFFFFF", 0.18));
+        }
+        if (cfg.branding && cfg.branding.name) {
+          document.title = cfg.branding.name;
+        }
+        // Apply default theme if no localStorage choice yet
+        if (!localStorage.getItem("dockyard.theme") && cfg.ui && cfg.ui.default_theme) {
+          const t = cfg.ui.default_theme;
+          localStorage.setItem("dockyard.theme", t);
+          document.documentElement.dataset.theme = t;
+          const sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.classList.toggle("dark", t === "dark" || (t === "auto" && sysDark));
+        }
+        if (cfg.ui && cfg.ui.refresh_ms) state.refreshMs = cfg.ui.refresh_ms;
+        if (cfg.ui && cfg.ui.sparkline_seconds) state.sparkSeconds = cfg.ui.sparkline_seconds;
+        if (cfg.ui && cfg.ui.default_view && !sessionStorage.getItem("dockyard.view")) {
+          state.view = cfg.ui.default_view;
+        }
+      } catch (e) {
+        // Non-fatal
+        console.warn("config load failed", e);
+      }
+    }
+
+    function mixHex(a, b, t) {
+      // Simple 2-color linear mix in sRGB. a, b are #rrggbb.
+      const ah = a.replace("#",""), bh = b.replace("#","");
+      const ar = parseInt(ah.slice(0,2),16), ag = parseInt(ah.slice(2,4),16), ab = parseInt(ah.slice(4,6),16);
+      const br = parseInt(bh.slice(0,2),16), bg = parseInt(bh.slice(2,4),16), bb = parseInt(bh.slice(4,6),16);
+      const r = Math.round(ar + (br-ar)*t).toString(16).padStart(2,"0");
+      const g = Math.round(ag + (bg-ag)*t).toString(16).padStart(2,"0");
+      const bl = Math.round(ab + (bb-ab)*t).toString(16).padStart(2,"0");
+      return `#${r}${g}${bl}`;
+    }
+
+    async function loadSockets() {
+      try { state.sockets = await api("GET", "/api/sockets"); } catch (e) { /* ignore */ }
+    }
+
+    async function swapSocket(path) {
+      try {
+        const res = await api("POST", "/api/socket/swap", {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        state.lastError = null;
+        await loadSockets();
+        await refresh();
+      } catch (e) {
+        state.lastError = "Engine swap failed: " + e.message;
+        render();
+      }
     }
 
     async function refresh() {
@@ -180,18 +258,52 @@
         state.system = system;
         state.health = health;
         state.lastError = null;
+        // Refresh stats for running containers (one-shot)
+        refreshStats(containers).catch(() => {});
       } catch (e) {
         state.lastError = e.message;
       }
       render();
     }
 
-    async function loadDF() {
-      try {
-        state.df = await api("GET", "/api/system/df");
-      } catch (e) {
-        state.lastError = e.message;
+    async function refreshStats(containers) {
+      const now = Date.now();
+      const running = containers.filter(c => (c.State || "").toLowerCase() === "running");
+      // Limit concurrency to avoid swamping the socket
+      const chunk = 4;
+      for (let i = 0; i < running.length; i += chunk) {
+        const slice = running.slice(i, i+chunk);
+        await Promise.all(slice.map(async c => {
+          try {
+            const s = await api("GET", `/api/containers/${c.Id}/stats?stream=0`);
+            const cpu = computeCpuPercent(s);
+            const memUsage = (s.memory_stats && s.memory_stats.usage) || 0;
+            const memLimit = (s.memory_stats && s.memory_stats.limit) || 1;
+            const list = state.stats[c.Id] || [];
+            list.push({ t: now, cpu, mem: memUsage / memLimit });
+            // Trim to sparkSeconds window
+            const cutoff = now - state.sparkSeconds * 1000;
+            state.stats[c.Id] = list.filter(p => p.t >= cutoff);
+          } catch (e) { /* skip */ }
+        }));
       }
+      renderSparklines();
+    }
+
+    function computeCpuPercent(s) {
+      // Per Docker docs: cpu_delta / system_delta * online_cpus
+      try {
+        const cpuDelta = s.cpu_stats.cpu_usage.total_usage - s.precpu_stats.cpu_usage.total_usage;
+        const sysDelta = s.cpu_stats.system_cpu_usage - s.precpu_stats.system_cpu_usage;
+        const cpus = s.cpu_stats.online_cpus || (s.cpu_stats.cpu_usage.percpu_usage || []).length || 1;
+        if (sysDelta > 0 && cpuDelta >= 0) return (cpuDelta / sysDelta) * cpus;
+      } catch (_) { /* */ }
+      return 0;
+    }
+
+    async function loadDF() {
+      try { state.df = await api("GET", "/api/system/df"); }
+      catch (e) { state.lastError = e.message; }
       render();
     }
 
@@ -211,6 +323,16 @@
       }
     }
 
+    async function restartProject(name) {
+      if (!confirm(`Restart every container in project "${name}"?`)) return;
+      try {
+        await api("POST", `/api/projects/${encodeURIComponent(name)}/restart`);
+        await refresh();
+      } catch (e) {
+        alert(`Project restart failed: ${e.message}`);
+      }
+    }
+
     function tailLogs(id) {
       if (state.logs.abort) state.logs.abort.abort();
       state.logs = { open: true, id, lines: [], abort: new AbortController() };
@@ -226,8 +348,7 @@
             state.logs.lines.push(decoder.decode(value, { stream: true }));
             renderLogs();
           }
-        })
-        .catch(() => {});
+        }).catch(() => {});
     }
 
     function closeLogs() {
@@ -236,9 +357,59 @@
       render();
     }
 
-    // -------------------------------------------------------------------
+    function openPullModal() { state.pull = { open: true, name: "", lines: [], running: false, abort: null }; render(); }
+    function closePullModal() {
+      if (state.pull.abort) state.pull.abort.abort();
+      state.pull = { open: false, name: "", lines: [], running: false, abort: null };
+      render();
+    }
+    async function doPull() {
+      const name = (state.pull.name || "").trim();
+      if (!name) return;
+      state.pull.running = true; state.pull.lines = [];
+      state.pull.abort = new AbortController();
+      renderPull();
+      const [img, tag] = name.includes(":") ? name.split(":", 2) : [name, "latest"];
+      const url = `/api/images/pull?fromImage=${encodeURIComponent(img)}&tag=${encodeURIComponent(tag)}`;
+      try {
+        const res = await fetch(url, { method: "POST", signal: state.pull.abort.signal });
+        if (!res.body) throw new Error("no body");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split("\n");
+          buf = parts.pop() || "";
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            try {
+              const evt = JSON.parse(part);
+              const msg = evt.error
+                ? "❌ " + evt.error
+                : evt.status + (evt.progress ? "  " + evt.progress : "");
+              state.pull.lines.push(msg);
+            } catch { state.pull.lines.push(part); }
+            renderPull();
+          }
+        }
+        state.pull.lines.push("✅ done");
+        renderPull();
+      } catch (e) {
+        state.pull.lines.push("❌ " + e.message);
+        renderPull();
+      } finally {
+        state.pull.running = false;
+        renderPull();
+        await refresh();
+      }
+    }
+
+    // ===================================================================
     // Views
-    // -------------------------------------------------------------------
+    // ===================================================================
     function renderSidebar() {
       const nav = [
         ["compose",    "🧩",  "Compose"],
@@ -259,13 +430,23 @@
       const engine = state.health.engine || "?";
       const ver = state.health.version || "";
       const ok = state.health.reachable;
+      const brandName = (state.config && state.config.branding && state.config.branding.name) || "Dockyard";
+
+      // Engine swapper dropdown
+      const swapper = state.sockets.length > 1 ? `
+        <select id="engine-swap" class="text-[10px] mono bg-paper-2 dark:bg-ink border border-line dark:border-line-dark rounded px-1 py-0.5 w-full mt-1">
+          ${state.sockets.map(s => `
+            <option value="${escapeHTML(s.path)}" ${s.active ? "selected" : ""} ${s.reachable ? "" : "disabled"}>
+              ${escapeHTML(s.engine)}${s.profile ? " · " + escapeHTML(s.profile) : ""}${s.reachable ? "" : " (offline)"}
+            </option>`).join("")}
+        </select>` : "";
 
       return `
         <aside class="sidebar w-56 shrink-0 border-r border-line dark:border-line-dark bg-paper dark:bg-ink-2 flex flex-col h-screen sticky top-0 overflow-y-auto">
           <div class="px-4 py-4 flex items-center gap-2 border-b border-line dark:border-line-dark">
             <span class="text-xl">🚢</span>
-            <span class="font-semibold text-lg">Dockyard</span>
-            <span class="ml-auto text-[10px] mono opacity-50">v0.2.0</span>
+            <span class="font-semibold text-lg">${escapeHTML(brandName)}</span>
+            <span class="ml-auto text-[10px] mono opacity-50">v0.3.0</span>
           </div>
           <nav class="p-2 flex-1 space-y-0.5">${items}</nav>
           <div class="px-3 py-3 border-t border-line dark:border-line-dark text-[11px] space-y-2">
@@ -273,6 +454,7 @@
               <span class="inline-block w-2 h-2 rounded-full ${ok === true ? "bg-emerald-500" : ok === false ? "bg-rose-500" : "bg-zinc-400"}"></span>
               <span class="opacity-80">${escapeHTML(engine)}${ver ? " " + escapeHTML(ver) : ""}</span>
             </div>
+            ${swapper}
             <div class="theme-seg" data-theme-seg>
               <button data-theme="auto"  class="${document.documentElement.dataset.theme === "auto"  ? "on" : ""}">Auto</button>
               <button data-theme="light" class="${document.documentElement.dataset.theme === "light" ? "on" : ""}">Light</button>
@@ -280,6 +462,42 @@
             </div>
           </div>
         </aside>`;
+    }
+
+    function renderSpark(id) {
+      const series = state.stats[id] || [];
+      if (series.length < 2) return "";
+      const cpuPoints = series.map(p => p.cpu);
+      const memPoints = series.map(p => p.mem);
+      return `<span class="inline-flex items-center gap-1 ml-2">
+        <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none">${sparkPath(cpuPoints, "spark-cpu")}</svg>
+        <span class="text-[10px] mono opacity-60">cpu</span>
+        <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none">${sparkPath(memPoints, "spark-mem")}</svg>
+        <span class="text-[10px] mono opacity-60">mem</span>
+      </span>`;
+    }
+    function sparkPath(points, cls) {
+      if (!points.length) return "";
+      const max = Math.max(0.05, ...points);
+      const N = points.length;
+      const d = points.map((v,i) => {
+        const x = (i / (N - 1 || 1)) * 100;
+        const y = 30 - (v / max) * 28 - 1;
+        return (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1);
+      }).join(" ");
+      return `<path d="${d}" fill="none" stroke-width="1.5" class="${cls}" />`;
+    }
+
+    function renderAiAssist(c) {
+      if (!state.config?.ui?.show_ai_assist) return "";
+      const code = exitCode(c);
+      if (code === null || code === 0) return "";
+      const idShort = shortId(c.Id);
+      const q = `Container ${idShort} (${escapeHTML((c.Names && c.Names[0]) || "")}) exited with code ${code}. ` +
+                `Image: ${escapeHTML(imageName(c))}. ` +
+                `Why might this fail and what should I check?`;
+      const url = `/ask?q=${encodeURIComponent(q)}&from=dockyard&container=${encodeURIComponent(idShort)}`;
+      return `<a class="ai-assist" href="${state.mainAppOrigin}${url}" target="_blank" rel="noopener">🤖 Ask Claude why (exit ${code})</a>`;
     }
 
     function renderContainerRow(c) {
@@ -290,18 +508,22 @@
       const svc = composeService(c);
       const ports = portsLabel(c);
       return `
-        <div class="surface p-3 flex items-center gap-3 ${isBusy ? "opacity-50" : ""}">
+        <div class="surface p-3 flex items-center gap-3 draggable ${isBusy ? "opacity-50" : ""}"
+             draggable="${state.view === 'disk' ? 'true' : 'false'}"
+             data-drag-kind="container" data-drag-id="${id}">
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-medium truncate">${escapeHTML(name)}</span>
               ${statusPill(c)}
               ${svc ? `<span class="pill-zinc">${escapeHTML(svc)}</span>` : ""}
+              ${running ? renderSpark(id) : ""}
             </div>
             <div class="mt-1 text-[12px] opacity-70 truncate">
               <span class="mono">${escapeHTML(imageName(c))}</span>
               ${ports ? `<span class="ml-2 mono">${escapeHTML(ports)}</span>` : ""}
               <span class="ml-2 opacity-60">${fmtAge(c.Created)}</span>
             </div>
+            ${renderAiAssist(c)}
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
             ${running
@@ -331,6 +553,7 @@
           <header class="flex items-center gap-2 px-1">
             <span class="text-base font-semibold">${proj === "—" ? "Standalone containers" : escapeHTML(proj)}</span>
             <span class="pill-accent">${list.length}</span>
+            ${proj !== "—" ? `<button class="btn ml-auto" data-restart-proj="${escapeHTML(proj)}">Restart all</button>` : ""}
           </header>
           <div class="space-y-2">${list.map(renderContainerRow).join("")}</div>
         </section>`).join("");
@@ -342,9 +565,11 @@
     }
 
     function renderImagesView() {
-      if (!state.images.length) return `<div class="surface p-8 text-center opacity-70">No images.</div>`;
+      if (!state.images.length) return `<div class="surface p-8 text-center opacity-70">No images. <button class="btn-primary ml-2" data-pull-open>Pull one</button></div>`;
       return `<div class="space-y-2">${state.images.map(img => `
-        <div class="surface p-3 flex items-center gap-3">
+        <div class="surface p-3 flex items-center gap-3 draggable"
+             draggable="${state.view === 'disk' ? 'true' : 'false'}"
+             data-drag-kind="image" data-drag-id="${img.Id}">
           <div class="min-w-0 flex-1">
             <div class="font-medium truncate mono text-[13px]">${escapeHTML((img.RepoTags && img.RepoTags[0]) || shortId(img.Id))}</div>
             <div class="text-[12px] opacity-70 mt-1">
@@ -361,7 +586,9 @@
       const vols = state.volumes || [];
       if (!vols.length) return `<div class="surface p-8 text-center opacity-70">No volumes.</div>`;
       return `<div class="space-y-2">${vols.map(v => `
-        <div class="surface p-3">
+        <div class="surface p-3 draggable"
+             draggable="${state.view === 'disk' ? 'true' : 'false'}"
+             data-drag-kind="volume" data-drag-id="${escapeHTML(v.Name)}">
           <div class="font-medium mono text-[13px]">${escapeHTML(v.Name)}</div>
           <div class="text-[12px] opacity-70 mt-1">
             <span>driver: ${escapeHTML(v.Driver || "—")}</span>
@@ -386,32 +613,40 @@
       }
       const sum = (arr, key) => (arr || []).reduce((a, x) => a + (x[key] || 0), 0);
       const rows = [
-        ["Images",    sum(state.df.Images, "Size"),     (state.df.Images || []).length],
+        ["Images",     sum(state.df.Images, "Size"),     (state.df.Images || []).length],
         ["Containers", sum(state.df.Containers, "SizeRw"), (state.df.Containers || []).length],
-        ["Volumes",   sum(state.df.Volumes || [], "Size"), (state.df.Volumes || []).length],
+        ["Volumes",    sum(state.df.Volumes || [], "Size"), (state.df.Volumes || []).length],
         ["Build cache", state.df.BuildCacheSize || 0,    (state.df.BuildCache || []).length],
       ];
       const total = rows.reduce((a, [, s]) => a + s, 0);
       return `
-        <div class="surface p-4 space-y-3">
-          <div class="flex items-center justify-between">
-            <div>
-              <div class="text-sm opacity-70">Total disk usage</div>
-              <div class="text-2xl font-semibold">${fmtBytes(total)}</div>
+        <div class="grid lg:grid-cols-[1fr_280px] gap-3">
+          <div class="surface p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm opacity-70">Total disk usage</div>
+                <div class="text-2xl font-semibold">${fmtBytes(total)}</div>
+              </div>
+              <button class="btn-danger" data-prune="all">Prune all unused</button>
             </div>
-            <button class="btn-danger" data-prune="all">Prune unused</button>
+            <table class="w-full text-sm">
+              <thead><tr class="text-left opacity-60">
+                <th class="py-1">Type</th><th>Count</th><th class="text-right">Size</th>
+              </tr></thead>
+              <tbody>
+                ${rows.map(([n, s, c]) => `
+                  <tr class="border-t border-line dark:border-line-dark">
+                    <td class="py-2">${n}</td><td>${c}</td><td class="text-right mono">${fmtBytes(s)}</td>
+                  </tr>`).join("")}
+              </tbody>
+            </table>
+            <p class="text-[12px] opacity-60">Tip: switch to <strong>Images</strong>, <strong>Volumes</strong>, or <strong>Containers</strong> and drag rows onto the trash zone for one-by-one cleanup.</p>
           </div>
-          <table class="w-full text-sm">
-            <thead><tr class="text-left opacity-60">
-              <th class="py-1">Type</th><th>Count</th><th class="text-right">Size</th>
-            </tr></thead>
-            <tbody>
-              ${rows.map(([n, s, c]) => `
-                <tr class="border-t border-line dark:border-line-dark">
-                  <td class="py-2">${n}</td><td>${c}</td><td class="text-right mono">${fmtBytes(s)}</td>
-                </tr>`).join("")}
-            </tbody>
-          </table>
+          <div id="trash-zone" class="trash-zone bg-paper-2 dark:bg-ink-2 flex flex-col items-center justify-center min-h-[180px]">
+            <div class="text-2xl mb-1">🗑️</div>
+            <div>Drop to remove</div>
+            <div class="text-[11px] opacity-60 mt-1">images · volumes · containers</div>
+          </div>
         </div>`;
     }
 
@@ -430,7 +665,10 @@
           <dt class="opacity-60">Images</dt>                    <dd>${s.Images ?? "?"}</dd>
         </dl>
         <h2 class="text-base font-semibold mt-4 mb-2">About</h2>
-        <p class="opacity-80">Dockyard is local-first. No telemetry, no sign-in. Source: <a class="underline" href="https://github.com/marvelousempire/claude-chat-reader/tree/main/dockyard" target="_blank" rel="noreferrer">claude-chat-reader/dockyard</a>.</p>
+        <p class="opacity-80">Dockyard is local-first. No telemetry, no sign-in. Source:
+          <a class="underline" href="https://github.com/marvelousempire/claude-chat-reader/tree/main/dockyard" target="_blank" rel="noreferrer">claude-chat-reader/dockyard</a>.
+        </p>
+        <p class="opacity-80 text-[12px]">Plan 0013 — v0.3.0 — built with the BLUEPRINT pattern.</p>
       </div>`;
     }
 
@@ -441,7 +679,6 @@
         el.scrollTop = el.scrollHeight;
       }
     }
-
     function renderLogsOverlay() {
       if (!state.logs.open) return "";
       return `
@@ -456,28 +693,72 @@
         </div>`;
     }
 
+    function renderPull() {
+      const el = document.getElementById("pull-stream");
+      if (el) {
+        el.textContent = state.pull.lines.join("\n");
+        el.scrollTop = el.scrollHeight;
+      }
+      const btn = document.getElementById("pull-go");
+      if (btn) btn.disabled = state.pull.running;
+    }
+    function renderPullOverlay() {
+      if (!state.pull.open) return "";
+      return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center px-4 py-8 backdrop-blur-md bg-black/40">
+          <div class="surface w-full max-w-xl flex flex-col">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-line dark:border-line-dark">
+              <div class="font-medium">Pull image</div>
+              <button class="btn" data-close-pull>Close</button>
+            </div>
+            <div class="p-4 space-y-3">
+              <label class="block text-sm">
+                <div class="opacity-70 text-[12px] mb-1">Image name (e.g. <code class="mono">alpine:latest</code>, <code class="mono">postgres:16</code>):</div>
+                <input id="pull-input" class="w-full px-2 py-1.5 rounded border border-line dark:border-line-dark bg-paper dark:bg-ink mono text-sm" placeholder="repo:tag" value="${escapeHTML(state.pull.name)}" />
+              </label>
+              <div class="flex gap-2">
+                <button id="pull-go" class="btn-primary" ${state.pull.running ? "disabled" : ""}>${state.pull.running ? "Pulling…" : "Pull"}</button>
+                <button class="btn" data-close-pull>Cancel</button>
+              </div>
+              <pre id="pull-stream" class="logs-pane min-h-[160px]"></pre>
+            </div>
+          </div>
+        </div>`;
+    }
+
     function renderHeader() {
+      const titles = {
+        compose: "Compose projects",
+        containers: "All containers",
+        images: "Images",
+        volumes: "Volumes",
+        networks: "Networks",
+        disk: "Disk usage",
+        settings: "Settings",
+      };
+      const verPill = state.health.reachable
+        ? `<span class="ver-pill">engine ${escapeHTML(state.health.engine)} · ${escapeHTML(state.health.version || "?")}</span>`
+        : `<span class="pill-red">engine unreachable</span>`;
+      const pullBtn = (state.view === "images")
+        ? `<button class="btn-primary" data-pull-open>+ Pull image</button>`
+        : "";
       return `<header class="flex items-center justify-between px-6 py-4 border-b border-line dark:border-line-dark">
         <div>
-          <h1 class="text-lg font-semibold">${escapeHTML({
-            compose: "Compose projects",
-            containers: "All containers",
-            images: "Images",
-            volumes: "Volumes",
-            networks: "Networks",
-            disk: "Disk usage",
-            settings: "Settings",
-          }[state.view] || "Dockyard")}</h1>
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-semibold">${escapeHTML(titles[state.view] || "Dockyard")}</h1>
+            ${verPill}
+          </div>
           ${state.lastError ? `<div class="text-rose-500 text-[12px] mt-1 mono">${escapeHTML(state.lastError)}</div>` : ""}
         </div>
         <div class="flex items-center gap-2">
+          ${pullBtn}
           <button class="btn" id="refresh-btn">↻ Refresh</button>
         </div>
       </header>`;
     }
 
     function renderMain() {
-      const inner = {
+      const inner = ({
         compose: renderComposeView,
         containers: renderContainersView,
         images: renderImagesView,
@@ -485,25 +766,36 @@
         networks: renderNetworksView,
         disk: renderDiskView,
         settings: renderSettings,
-      }[state.view] || renderComposeView;
+      })[state.view] || renderComposeView;
       return `<main class="flex-1 min-w-0 flex flex-col">
         ${renderHeader()}
         <div class="p-6 space-y-3">${inner()}</div>
       </main>`;
     }
 
-    function render() {
-      document.getElementById("app").innerHTML = renderSidebar() + renderMain() + renderLogsOverlay();
-      wire();
+    function renderSparklines() {
+      // Lightweight in-place update for rows already in DOM
+      document.querySelectorAll("[data-spark-id]").forEach((el) => {
+        const id = el.dataset.sparkId;
+        el.outerHTML = renderSpark(id);
+      });
     }
 
-    // -------------------------------------------------------------------
-    // Event wiring (delegated)
-    // -------------------------------------------------------------------
+    function render() {
+      document.getElementById("app").innerHTML = renderSidebar() + renderMain() + renderLogsOverlay() + renderPullOverlay();
+      wire();
+      if (state.logs.open) renderLogs();
+      if (state.pull.open) renderPull();
+    }
+
+    // ===================================================================
+    // Event wiring
+    // ===================================================================
     function wire() {
       document.querySelectorAll("[data-nav]").forEach((el) => {
         el.addEventListener("click", () => {
           state.view = el.dataset.nav;
+          sessionStorage.setItem("dockyard.view", state.view);
           if (state.view === "disk") loadDF();
           render();
         });
@@ -524,8 +816,11 @@
           await refresh();
         });
       });
-      const closeBtn = document.querySelector("[data-close-logs]");
-      if (closeBtn) closeBtn.addEventListener("click", closeLogs);
+      document.querySelectorAll("[data-restart-proj]").forEach((el) => {
+        el.addEventListener("click", () => restartProject(el.dataset.restartProj));
+      });
+      const closeLogsBtn = document.querySelector("[data-close-logs]");
+      if (closeLogsBtn) closeLogsBtn.addEventListener("click", closeLogs);
       const pruneBtn = document.querySelector("[data-prune]");
       if (pruneBtn) pruneBtn.addEventListener("click", async () => {
         if (!confirm("Run docker system prune (unused containers / images / volumes / networks)?")) return;
@@ -534,6 +829,16 @@
       });
       const refreshBtn = document.getElementById("refresh-btn");
       if (refreshBtn) refreshBtn.addEventListener("click", refresh);
+      document.querySelectorAll("[data-pull-open]").forEach((el) => {
+        el.addEventListener("click", openPullModal);
+      });
+      const closePullBtn = document.querySelectorAll("[data-close-pull]");
+      closePullBtn.forEach(b => b.addEventListener("click", closePullModal));
+      const pullInput = document.getElementById("pull-input");
+      if (pullInput) pullInput.addEventListener("input", (e) => { state.pull.name = e.target.value; });
+      const pullGo = document.getElementById("pull-go");
+      if (pullGo) pullGo.addEventListener("click", doPull);
+
       // Theme segmented control
       document.querySelectorAll("[data-theme-seg] [data-theme]").forEach((el) => {
         el.addEventListener("click", () => {
@@ -545,13 +850,58 @@
           render();
         });
       });
+
+      // Engine swapper
+      const swap = document.getElementById("engine-swap");
+      if (swap) swap.addEventListener("change", (e) => swapSocket(e.target.value));
+
+      // Drag-to-prune
+      document.querySelectorAll(".draggable[draggable='true']").forEach((el) => {
+        el.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("text/plain", JSON.stringify({
+            kind: el.dataset.dragKind,
+            id: el.dataset.dragId,
+          }));
+          e.dataTransfer.effectAllowed = "move";
+        });
+      });
+      const trash = document.getElementById("trash-zone");
+      if (trash) {
+        trash.addEventListener("dragover", (e) => { e.preventDefault(); trash.classList.add("over"); });
+        trash.addEventListener("dragleave", () => trash.classList.remove("over"));
+        trash.addEventListener("drop", async (e) => {
+          e.preventDefault();
+          trash.classList.remove("over");
+          let payload;
+          try { payload = JSON.parse(e.dataTransfer.getData("text/plain")); }
+          catch { return; }
+          if (!confirm(`Remove ${payload.kind} ${payload.id.slice(0, 24)}…?`)) return;
+          try {
+            if (payload.kind === "image") await api("DELETE", `/api/images/${encodeURIComponent(payload.id)}`);
+            else if (payload.kind === "volume") await api("DELETE", `/api/volumes/${encodeURIComponent(payload.id)}`);
+            else if (payload.kind === "container") await api("DELETE", `/api/containers/${payload.id}?force=1`);
+            await refresh(); await loadDF();
+          } catch (err) { alert(err.message); }
+        });
+      }
     }
 
-    // -------------------------------------------------------------------
+    // ===================================================================
     // Boot
-    // -------------------------------------------------------------------
-    refresh();
-    setInterval(refresh, state.refreshMs);
+    // ===================================================================
+    (async () => {
+      // Resolve main-app origin (best-effort) for AI assist
+      state.mainAppOrigin = (window.location.port === "4321"
+        ? window.location.protocol + "//" + window.location.hostname + ":3000"
+        : window.location.origin);
+      await loadConfig();
+      await loadSockets();
+      await refresh();
+      setInterval(refresh, state.refreshMs);
+      // Restore last view if cached
+      const lastView = sessionStorage.getItem("dockyard.view");
+      if (lastView) { state.view = lastView; render(); }
+    })();
   </script>
 </body>
 </html>

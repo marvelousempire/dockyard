@@ -117,6 +117,10 @@ class DockyardHandler(BaseHTTPRequestHandler):
                 return self._serve_index()
             if path.startswith("/static/"):
                 return self._serve_static(path[len("/static/") :])
+            if path == "/api/config":
+                return self._serve_config()
+            if path == "/api/sockets":
+                return self._serve_sockets()
             if path == "/api/system":
                 return self._proxy_json("GET", "/info")
             if path == "/api/system/df":
@@ -173,6 +177,11 @@ class DockyardHandler(BaseHTTPRequestHandler):
                 return self._pull_image(query)
             if path == "/api/system/prune":
                 return self._system_prune(query)
+            if path == "/api/socket/swap":
+                return self._swap_socket()
+            if path.startswith("/api/projects/") and path.endswith("/restart"):
+                proj = urllib.parse.unquote(path.split("/")[3])
+                return self._restart_project(proj)
             self._send_json(404, {"error": "not found", "path": path})
         except BrokenPipeError:
             return
@@ -431,6 +440,122 @@ class DockyardHandler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 results[kind] = {"raw": body.decode("utf-8", errors="replace")}
         self._send_json(200, results)
+
+    # ----- new endpoints (plan 0013) -----
+
+    def _serve_config(self) -> None:
+        """Return the runtime config — UI uses this for branding + theme defaults."""
+        from dockyard.lib.socket import load_config  # local import to avoid cycle
+        cfg = dict(load_config())
+        cfg["_runtime"] = {
+            "engine": self.engine,
+            "socket": self.socket_path,
+        }
+        self._send_json(200, cfg)
+
+    def _serve_sockets(self) -> None:
+        """Enumerate all detected Docker sockets so the UI can offer a swapper."""
+        from dockyard.lib.socket import detect_socket, _candidates  # type: ignore
+        # Walk every candidate, not just the first that's reachable
+        home_env = {"HOME": os.path.expanduser("~")}
+        all_sockets = []
+        seen = set()
+        for cand in _candidates(Path(os.path.expanduser("~")), dict(os.environ)):
+            if cand.path in seen:
+                continue
+            seen.add(cand.path)
+            # Re-stat to confirm reachability
+            try:
+                exists = os.path.exists(cand.path)
+            except OSError:
+                exists = False
+            all_sockets.append(
+                {
+                    "path": cand.path,
+                    "engine": cand.engine,
+                    "profile": cand.profile,
+                    "reachable": exists,
+                    "active": cand.path == self.socket_path,
+                }
+            )
+        self._send_json(200, all_sockets)
+
+    def _swap_socket(self) -> None:
+        """Switch the active Docker socket at runtime.
+
+        POST /api/socket/swap   body={"path": "/Users/.../docker.sock"}
+        """
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            return self._send_json(400, {"error": "invalid JSON body"})
+        new_path = (body.get("path") or "").strip()
+        if not new_path:
+            return self._send_json(400, {"error": "missing 'path'"})
+        if not os.path.exists(new_path):
+            return self._send_json(404, {"error": f"socket not found: {new_path}"})
+        # Probe before swapping
+        try:
+            status, _h, _b = docker_request(new_path, "GET", "/_ping", timeout=3)
+            if status != 200:
+                return self._send_json(
+                    503, {"error": f"socket reachable but /_ping returned {status}"}
+                )
+        except Exception as e:  # noqa: BLE001
+            return self._send_json(
+                503, {"error": f"socket unreachable: {e}"}
+            )
+        # Best-effort engine label
+        engine = "custom"
+        for keyword, label in [
+            ("colima", "colima"),
+            ("orbstack", "orbstack"),
+            ("docker.docker", "docker-desktop"),
+            ("/var/run/docker.sock", "native"),
+        ]:
+            if keyword in new_path:
+                engine = label
+                break
+        DockyardHandler.socket_path = new_path
+        DockyardHandler.engine = engine
+        self._send_json(
+            200, {"ok": True, "engine": engine, "socket": new_path}
+        )
+
+    def _restart_project(self, project: str) -> None:
+        """Restart every container whose com.docker.compose.project label matches."""
+        # Find containers
+        filt = json.dumps({"label": [f"com.docker.compose.project={project}"]})
+        qs = f"all=1&filters={urllib.parse.quote(filt)}"
+        status, _h, body = docker_request(
+            self.socket_path, "GET", f"/containers/json?{qs}"
+        )
+        if status >= 400:
+            return self._send_json(status, {"error": body.decode("utf-8", errors="replace")})
+        try:
+            containers = json.loads(body)
+        except json.JSONDecodeError:
+            return self._send_json(500, {"error": "could not parse container list"})
+        if not containers:
+            return self._send_json(
+                404, {"error": f"no containers found for project {project!r}"}
+            )
+        results = []
+        for c in containers:
+            cid = c["Id"]
+            name = (c.get("Names") or ["?"])[0].lstrip("/")
+            try:
+                s, _h2, b2 = docker_request(
+                    self.socket_path, "POST", f"/containers/{cid}/restart", timeout=30
+                )
+                results.append(
+                    {"id": cid[:12], "name": name, "ok": s < 400, "status": s}
+                )
+            except Exception as e:  # noqa: BLE001
+                results.append({"id": cid[:12], "name": name, "ok": False, "error": str(e)})
+        self._send_json(200, {"project": project, "containers": results})
 
 
 # ---------------------------------------------------------------------------

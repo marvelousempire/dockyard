@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Dockyard">
+  <defs>
+    <linearGradient id="hull" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%"  stop-color="#11A488"/>
+      <stop offset="100%" stop-color="#0E7C66"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="#0B1115"/>
+  <!-- Wave -->
+  <path d="M4 48 Q16 44 28 48 T52 48 T64 46 V64 H0 V46 Q2 47 4 48Z" fill="#11A488" opacity="0.35"/>
+  <path d="M0 52 Q12 49 24 52 T48 52 T64 50 V64 H0Z" fill="#0E7C66" opacity="0.6"/>
+  <!-- Hull -->
+  <path d="M10 36 L54 36 L48 50 L16 50 Z" fill="url(#hull)" stroke="#0B1115" stroke-width="1"/>
+  <!-- Cabin -->
+  <rect x="22" y="26" width="20" height="10" fill="#F1F1EC"/>
+  <rect x="25" y="29" width="4" height="4" fill="#0B1115"/>
+  <rect x="35" y="29" width="4" height="4" fill="#0B1115"/>
+  <!-- Smokestack -->
+  <rect x="30" y="14" width="6" height="12" fill="#F1F1EC"/>
+  <circle cx="33" cy="12" r="3" fill="#cbd5e1" opacity="0.85"/>
+  <circle cx="36" cy="9"  r="2" fill="#cbd5e1" opacity="0.6"/>
+</svg>
