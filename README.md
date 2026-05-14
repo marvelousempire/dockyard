@@ -6,9 +6,16 @@
 
 ## Status
 
-**Pre-build (v0.1.0).** The design is written; the code is not yet.
-See **[PRD.md](./PRD.md)** for the full proposal — why this exists, what
-it covers, and how it's architected.
+**V0 (v0.2.0) — runnable.** Server, UI, socket auto-detect, doctor,
+MCP, tests, Caddyfile snippet — all shipped (Plan 0012). Web-terminal
+exec deferred to v0.3.0. See **[PRD.md](./PRD.md)** for the design and
+**[CHANGELOG.md](./CHANGELOG.md)** for what's in.
+
+```bash
+make -C dockyard doctor   # check engine + socket
+make -C dockyard run      # start on :4321
+open http://127.0.0.1:4321
+```
 
 ## The five-second pitch
 

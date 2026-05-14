@@ -739,3 +739,67 @@ project: **local-first, low-overhead, drop-in compatible, no cloud
 required, no lock-in, opt-in everywhere**.
 
 Same as the Clinic. Same as the Blueprint. The pattern compounds.
+
+---
+
+## Platform support
+
+Dockyard works on any host that exposes a Docker Engine API socket.
+The socket-detection logic ([`dockyard/lib/socket.py`](./lib/socket.py))
+probes in this order; the first reachable wins.
+
+### macOS (Apple Silicon — primary target)
+
+| Engine | Socket path | Notes |
+|---|---|---|
+| Colima default profile | `~/.colima/default/docker.sock` | Recommended (see Part 1) |
+| Colima custom profile | `~/.colima/<profile>/docker.sock` | Auto-iterated |
+| OrbStack | `~/.orbstack/run/docker.sock` | Drop-in alternative |
+| Docker Desktop | `~/Library/Containers/com.docker.docker/Data/docker.raw.sock` | Still works if you have it |
+
+### macOS (Intel)
+
+Same as Apple Silicon — paths are user-relative. Performance on Intel
+is slower because the Linux VM is emulated; that's a Docker limitation,
+not a Dockyard one.
+
+### Linux (native)
+
+| Engine | Socket path | Notes |
+|---|---|---|
+| dockerd (native) | `/var/run/docker.sock` | Most distros, root-owned. Add your user to the `docker` group, or run Dockyard as root. |
+| Rootless dockerd | `$XDG_RUNTIME_DIR/docker.sock` | Set `DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock` and Dockyard picks it up via the env-var probe. |
+
+### Windows (WSL2)
+
+The recommended path is to run Dockyard **inside WSL2** (Ubuntu, Debian,
+etc.) and talk to a Linux-native dockerd installed in the same WSL
+distro (`sudo apt install docker.io`). The socket is `/var/run/docker.sock`.
+
+For users with **Docker Desktop on Windows** (WSL2 backend), expose
+the socket from WSL by setting `DOCKER_HOST` in WSL:
+
+```bash
+export DOCKER_HOST="unix:///mnt/wsl/shared-docker/docker.sock"
+```
+
+Native Windows (no WSL) is **not supported in V0** — Dockyard uses
+`socket.AF_UNIX`, which requires WSL or Cygwin. V1 may add named-pipe
+support (`//./pipe/docker_engine`).
+
+### Remote daemons (deferred to V1)
+
+`DOCKER_HOST=tcp://…` and `DOCKER_HOST=ssh://…` are read by the probe
+but currently fall through. V1 adds TCP + SSH transport to the socket
+adapter; the rest of the server stays unchanged.
+
+### Override
+
+If auto-detect picks the wrong engine (for example you run both Colima
+and OrbStack), pin the path in `dockyard.config.json`:
+
+```json
+{ "socket": "/Users/you/.colima/team/docker.sock" }
+```
+
+`make doctor` will validate against that exact path.

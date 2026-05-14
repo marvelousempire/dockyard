@@ -1,0 +1,60 @@
+# Dockyard — Caddyfile snippet
+#
+# Drops into the main repo's `caddy/Caddyfile` (the existing app stack
+# pattern documented in BLUEPRINT.md). Routes `dockyard.localhost` to
+# the Dockyard server running on host port 4321 with `tls internal`,
+# so the browser sees HTTPS without a CA-signed cert.
+#
+# Usage (one of):
+#
+#   1) Append to the existing Caddyfile:
+#        cat dockyard/dockyard.caddyfile >> caddy/Caddyfile
+#        docker compose restart caddy
+#
+#   2) Validate the snippet on its own:
+#        caddy validate --config dockyard/dockyard.caddyfile --adapter caddyfile
+#
+#   3) Use a different hostname:
+#        Replace `dockyard.localhost` with whatever you want (e.g.
+#        `dock.local.test`). For non-.localhost hosts, add the name
+#        to /etc/hosts pointing at 127.0.0.1.
+#
+# Security headers match the main app's existing block (see Plan 0008).
+
+dockyard.localhost {
+	encode zstd gzip
+	tls internal
+
+	header {
+		# HSTS — 1 year, include subdomains, preload
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# CSP — relaxed for Tailwind CDN + xterm.js. Tighten for prod.
+		Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; img-src 'self' data: blob:; connect-src 'self' ws: wss:;"
+	}
+
+	# WebSocket upgrade for /api/containers/*/exec (web terminal)
+	@websockets {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+
+	# Proxy everything to the Dockyard server on the host. Inside the
+	# compose network, the host is reachable as `host.docker.internal`
+	# on macOS/Windows. On Linux, add this to compose:
+	#   extra_hosts: ["host.docker.internal:host-gateway"]
+	reverse_proxy host.docker.internal:4321 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+
+		# Disable buffering for streaming endpoints (logs, stats, exec)
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}

@@ -1,0 +1,18 @@
+{
+  "port": 4321,
+  "socket": "auto",
+  "auth": {
+    "mode": "none"
+  },
+  "branding": {
+    "name": "Dockyard",
+    "accent": "#0E7C66",
+    "favicon": "🚢"
+  },
+  "ui": {
+    "default_view": "compose",
+    "refresh_ms": 2000,
+    "logs_tail_lines": 200
+  },
+  "_comment": "socket=auto probes Colima -> OrbStack -> Docker Desktop -> /var/run/docker.sock. Set to an explicit path to pin (e.g. /Users/you/.colima/team/docker.sock)."
+}

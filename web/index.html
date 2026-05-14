@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dockyard</title>
+  <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='52'>🚢</text></svg>" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Pre-paint theme — applied BEFORE Tailwind class scan to avoid flash.
+    (function () {
+      const saved = localStorage.getItem("dockyard.theme") || "auto";
+      const sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const isDark = saved === "dark" || (saved === "auto" && sysDark);
+      document.documentElement.classList.toggle("dark", isDark);
+      document.documentElement.dataset.theme = saved;
+    })();
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            accent: "#0E7C66",
+            "accent-2": "#11A488",
+            ink: "#0B1115",
+            "ink-2": "#141C22",
+            paper: "#FAFAF7",
+            "paper-2": "#F1F1EC",
+            line: "#E5E5DD",
+            "line-dark": "#2A343C",
+          },
+          fontFamily: {
+            sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
+            mono: ["ui-monospace", "SF Mono", "Menlo", "Consolas", "monospace"],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    html, body { height: 100%; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; }
+    .pill { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium; }
+    .pill-green { @apply pill bg-emerald-500/15 text-emerald-700 dark:text-emerald-300; }
+    .pill-red   { @apply pill bg-rose-500/15 text-rose-700 dark:text-rose-300; }
+    .pill-amber { @apply pill bg-amber-500/15 text-amber-800 dark:text-amber-300; }
+    .pill-zinc  { @apply pill bg-zinc-500/15 text-zinc-700 dark:text-zinc-300; }
+    .pill-accent { @apply pill bg-accent/15 text-accent dark:text-accent-2; }
+    .btn { @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-md border border-line dark:border-line-dark hover:bg-paper-2 dark:hover:bg-ink-2 transition-colors; }
+    .btn-primary { @apply btn bg-accent text-white border-accent hover:bg-accent-2; }
+    .btn-danger { @apply btn text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30; }
+    .surface { @apply bg-white dark:bg-ink-2 border border-line dark:border-line-dark rounded-lg; }
+    .surface-subtle { @apply bg-paper dark:bg-ink rounded-md; }
+    .nav-item { @apply flex items-center gap-2 px-3 py-2 rounded-md text-sm text-zinc-700 dark:text-zinc-300 hover:bg-paper-2 dark:hover:bg-ink-2 cursor-pointer transition-colors; }
+    .nav-item.active { @apply bg-accent/10 text-accent dark:text-accent-2 font-medium; }
+    .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    /* Logs panel */
+    .logs-pane { @apply mono text-[12px] leading-snug whitespace-pre-wrap p-3 max-h-[60vh] overflow-y-auto bg-ink text-emerald-200 dark:bg-black; }
+    /* Theme segmented control */
+    .theme-seg { @apply flex items-center rounded-md border border-line dark:border-line-dark p-0.5 text-[11px]; }
+    .theme-seg button { @apply px-2 py-1 rounded; }
+    .theme-seg button.on { @apply bg-accent text-white; }
+    /* Hide scrollbars on the sidebar but allow scrolling */
+    .sidebar::-webkit-scrollbar { width: 6px; }
+    .sidebar::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.25); border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-paper text-ink dark:bg-ink dark:text-paper">
+  <div id="app" class="min-h-screen flex"></div>
+
+  <script>
+    // -------------------------------------------------------------------
+    // Tiny reactive helper — no framework, just signals + render-on-change
+    // -------------------------------------------------------------------
+    const state = {
+      view: "compose",          // compose | containers | images | volumes | networks | disk | settings
+      containers: [],
+      images: [],
+      volumes: [],
+      networks: [],
+      system: null,
+      health: { reachable: null, engine: "?", version: "?" },
+      df: null,
+      logs: { open: false, id: null, lines: [], abort: null },
+      busyIds: new Set(),
+      lastError: null,
+      refreshMs: 2000,
+    };
+
+    function $(html) {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = html.trim();
+      return tpl.content.firstElementChild;
+    }
+
+    function escapeHTML(s) {
+      return (s ?? "").toString()
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function fmtBytes(n) {
+      if (n == null || isNaN(n)) return "—";
+      if (n < 1024) return n + " B";
+      if (n < 1024**2) return (n/1024).toFixed(1) + " KB";
+      if (n < 1024**3) return (n/1024**2).toFixed(1) + " MB";
+      return (n/1024**3).toFixed(2) + " GB";
+    }
+
+    function fmtAge(unixSec) {
+      if (!unixSec) return "—";
+      const s = Math.floor(Date.now()/1000 - unixSec);
+      if (s < 60) return s + "s";
+      if (s < 3600) return Math.floor(s/60) + "m";
+      if (s < 86400) return Math.floor(s/3600) + "h";
+      return Math.floor(s/86400) + "d";
+    }
+
+    function statusPill(c) {
+      const s = (c.State || "").toLowerCase();
+      const cls = s === "running" ? "pill-green"
+                : s === "exited" || s === "dead" ? "pill-red"
+                : s === "paused" ? "pill-amber"
+                : "pill-zinc";
+      return `<span class="${cls}">${escapeHTML(s || c.Status || "?")}</span>`;
+    }
+
+    function shortId(id) { return id ? id.slice(0, 12) : ""; }
+
+    function composeProject(c) {
+      return (c.Labels && c.Labels["com.docker.compose.project"]) || "";
+    }
+
+    function composeService(c) {
+      return (c.Labels && c.Labels["com.docker.compose.service"]) || "";
+    }
+
+    function imageName(c) {
+      return c.Image || (c.RepoTags && c.RepoTags[0]) || "";
+    }
+
+    function portsLabel(c) {
+      const ps = c.Ports || [];
+      if (!ps.length) return "";
+      return ps
+        .filter(p => p.PublicPort)
+        .map(p => `${p.PublicPort}→${p.PrivatePort}/${p.Type}`)
+        .join(" ");
+    }
+
+    // -------------------------------------------------------------------
+    // API client
+    // -------------------------------------------------------------------
+    async function api(method, path, opts = {}) {
+      const res = await fetch(path, { method, ...opts });
+      if (!res.ok) {
+        let msg;
+        try { msg = (await res.json()).message || res.statusText; }
+        catch { msg = res.statusText; }
+        throw new Error(`${res.status} ${msg}`);
+      }
+      const ct = res.headers.get("content-type") || "";
+      return ct.includes("json") ? res.json() : res.text();
+    }
+
+    async function refresh() {
+      try {
+        const [containers, images, volumes, networks, system, health] = await Promise.all([
+          api("GET", "/api/containers?all=1"),
+          api("GET", "/api/images"),
+          api("GET", "/api/volumes"),
+          api("GET", "/api/networks"),
+          api("GET", "/api/system"),
+          api("GET", "/api/health"),
+        ]);
+        state.containers = containers;
+        state.images = images;
+        state.volumes = volumes.Volumes || volumes;
+        state.networks = networks;
+        state.system = system;
+        state.health = health;
+        state.lastError = null;
+      } catch (e) {
+        state.lastError = e.message;
+      }
+      render();
+    }
+
+    async function loadDF() {
+      try {
+        state.df = await api("GET", "/api/system/df");
+      } catch (e) {
+        state.lastError = e.message;
+      }
+      render();
+    }
+
+    async function containerAction(id, action) {
+      state.busyIds.add(id); render();
+      try {
+        if (action === "remove") {
+          await api("DELETE", `/api/containers/${id}?force=1`);
+        } else {
+          await api("POST", `/api/containers/${id}/${action}`);
+        }
+      } catch (e) {
+        alert(`Failed to ${action} ${shortId(id)}:\n${e.message}`);
+      } finally {
+        state.busyIds.delete(id);
+        await refresh();
+      }
+    }
+
+    function tailLogs(id) {
+      if (state.logs.abort) state.logs.abort.abort();
+      state.logs = { open: true, id, lines: [], abort: new AbortController() };
+      render();
+      fetch(`/api/containers/${id}/logs?tail=200&follow=1`, { signal: state.logs.abort.signal })
+        .then(async (res) => {
+          if (!res.body) return;
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            state.logs.lines.push(decoder.decode(value, { stream: true }));
+            renderLogs();
+          }
+        })
+        .catch(() => {});
+    }
+
+    function closeLogs() {
+      if (state.logs.abort) state.logs.abort.abort();
+      state.logs = { open: false, id: null, lines: [], abort: null };
+      render();
+    }
+
+    // -------------------------------------------------------------------
+    // Views
+    // -------------------------------------------------------------------
+    function renderSidebar() {
+      const nav = [
+        ["compose",    "🧩",  "Compose"],
+        ["containers", "📦",  "All containers"],
+        ["images",     "🖼️",  "Images"],
+        ["volumes",    "💾",  "Volumes"],
+        ["networks",   "🔌",  "Networks"],
+        ["disk",       "📊",  "Disk usage"],
+        ["settings",   "⚙️",   "Settings"],
+      ];
+      const items = nav.map(([key, icon, label]) =>
+        `<div class="nav-item ${state.view === key ? "active" : ""}" data-nav="${key}">
+           <span>${icon}</span><span>${label}</span>
+           ${key === "containers" ? `<span class="ml-auto text-[11px] opacity-60">${state.containers.length}</span>` : ""}
+           ${key === "images" ? `<span class="ml-auto text-[11px] opacity-60">${state.images.length}</span>` : ""}
+         </div>`).join("");
+
+      const engine = state.health.engine || "?";
+      const ver = state.health.version || "";
+      const ok = state.health.reachable;
+
+      return `
+        <aside class="sidebar w-56 shrink-0 border-r border-line dark:border-line-dark bg-paper dark:bg-ink-2 flex flex-col h-screen sticky top-0 overflow-y-auto">
+          <div class="px-4 py-4 flex items-center gap-2 border-b border-line dark:border-line-dark">
+            <span class="text-xl">🚢</span>
+            <span class="font-semibold text-lg">Dockyard</span>
+            <span class="ml-auto text-[10px] mono opacity-50">v0.2.0</span>
+          </div>
+          <nav class="p-2 flex-1 space-y-0.5">${items}</nav>
+          <div class="px-3 py-3 border-t border-line dark:border-line-dark text-[11px] space-y-2">
+            <div class="flex items-center gap-1.5">
+              <span class="inline-block w-2 h-2 rounded-full ${ok === true ? "bg-emerald-500" : ok === false ? "bg-rose-500" : "bg-zinc-400"}"></span>
+              <span class="opacity-80">${escapeHTML(engine)}${ver ? " " + escapeHTML(ver) : ""}</span>
+            </div>
+            <div class="theme-seg" data-theme-seg>
+              <button data-theme="auto"  class="${document.documentElement.dataset.theme === "auto"  ? "on" : ""}">Auto</button>
+              <button data-theme="light" class="${document.documentElement.dataset.theme === "light" ? "on" : ""}">Light</button>
+              <button data-theme="dark"  class="${document.documentElement.dataset.theme === "dark"  ? "on" : ""}">Dark</button>
+            </div>
+          </div>
+        </aside>`;
+    }
+
+    function renderContainerRow(c) {
+      const id = c.Id;
+      const isBusy = state.busyIds.has(id);
+      const running = (c.State || "").toLowerCase() === "running";
+      const name = (c.Names && c.Names[0] && c.Names[0].replace(/^\//, "")) || shortId(id);
+      const svc = composeService(c);
+      const ports = portsLabel(c);
+      return `
+        <div class="surface p-3 flex items-center gap-3 ${isBusy ? "opacity-50" : ""}">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-medium truncate">${escapeHTML(name)}</span>
+              ${statusPill(c)}
+              ${svc ? `<span class="pill-zinc">${escapeHTML(svc)}</span>` : ""}
+            </div>
+            <div class="mt-1 text-[12px] opacity-70 truncate">
+              <span class="mono">${escapeHTML(imageName(c))}</span>
+              ${ports ? `<span class="ml-2 mono">${escapeHTML(ports)}</span>` : ""}
+              <span class="ml-2 opacity-60">${fmtAge(c.Created)}</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            ${running
+              ? `<button class="btn" data-act="stop"    data-id="${id}">Stop</button>
+                 <button class="btn" data-act="restart" data-id="${id}">Restart</button>`
+              : `<button class="btn-primary" data-act="start" data-id="${id}">Start</button>`}
+            <button class="btn" data-act="logs"   data-id="${id}">Logs</button>
+            <button class="btn-danger" data-act="remove" data-id="${id}">Remove</button>
+          </div>
+        </div>`;
+    }
+
+    function renderComposeView() {
+      const groups = new Map();
+      for (const c of state.containers) {
+        const proj = composeProject(c) || "—";
+        if (!groups.has(proj)) groups.set(proj, []);
+        groups.get(proj).push(c);
+      }
+      if (groups.size === 0) {
+        return `<div class="surface p-8 text-center opacity-70">No containers running. Try <code class="mono">docker compose up</code>.</div>`;
+      }
+      const projects = Array.from(groups.entries())
+        .sort(([a], [b]) => (a === "—" ? 1 : b === "—" ? -1 : a.localeCompare(b)));
+      return projects.map(([proj, list]) => `
+        <section class="space-y-2">
+          <header class="flex items-center gap-2 px-1">
+            <span class="text-base font-semibold">${proj === "—" ? "Standalone containers" : escapeHTML(proj)}</span>
+            <span class="pill-accent">${list.length}</span>
+          </header>
+          <div class="space-y-2">${list.map(renderContainerRow).join("")}</div>
+        </section>`).join("");
+    }
+
+    function renderContainersView() {
+      if (state.containers.length === 0) return `<div class="surface p-8 text-center opacity-70">No containers.</div>`;
+      return `<div class="space-y-2">${state.containers.map(renderContainerRow).join("")}</div>`;
+    }
+
+    function renderImagesView() {
+      if (!state.images.length) return `<div class="surface p-8 text-center opacity-70">No images.</div>`;
+      return `<div class="space-y-2">${state.images.map(img => `
+        <div class="surface p-3 flex items-center gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium truncate mono text-[13px]">${escapeHTML((img.RepoTags && img.RepoTags[0]) || shortId(img.Id))}</div>
+            <div class="text-[12px] opacity-70 mt-1">
+              <span>${fmtBytes(img.Size)}</span>
+              <span class="ml-2">${fmtAge(img.Created)}</span>
+              <span class="ml-2 mono opacity-60">${shortId(img.Id).replace(/^sha256:/, "")}</span>
+            </div>
+          </div>
+          <button class="btn-danger" data-img-remove="${img.Id}">Remove</button>
+        </div>`).join("")}</div>`;
+    }
+
+    function renderVolumesView() {
+      const vols = state.volumes || [];
+      if (!vols.length) return `<div class="surface p-8 text-center opacity-70">No volumes.</div>`;
+      return `<div class="space-y-2">${vols.map(v => `
+        <div class="surface p-3">
+          <div class="font-medium mono text-[13px]">${escapeHTML(v.Name)}</div>
+          <div class="text-[12px] opacity-70 mt-1">
+            <span>driver: ${escapeHTML(v.Driver || "—")}</span>
+            <span class="ml-2">mountpoint: ${escapeHTML(v.Mountpoint || "—")}</span>
+          </div>
+        </div>`).join("")}</div>`;
+    }
+
+    function renderNetworksView() {
+      if (!state.networks.length) return `<div class="surface p-8 text-center opacity-70">No networks.</div>`;
+      return `<div class="space-y-2">${state.networks.map(n => `
+        <div class="surface p-3">
+          <div class="font-medium">${escapeHTML(n.Name)} <span class="pill-zinc ml-1">${escapeHTML(n.Driver)}</span></div>
+          <div class="text-[12px] opacity-70 mt-1 mono">${escapeHTML(n.Id.slice(0, 12))} · scope: ${escapeHTML(n.Scope)}</div>
+        </div>`).join("")}</div>`;
+    }
+
+    function renderDiskView() {
+      if (!state.df) {
+        if (state.view === "disk") loadDF();
+        return `<div class="surface p-8 text-center opacity-70">Loading disk usage…</div>`;
+      }
+      const sum = (arr, key) => (arr || []).reduce((a, x) => a + (x[key] || 0), 0);
+      const rows = [
+        ["Images",    sum(state.df.Images, "Size"),     (state.df.Images || []).length],
+        ["Containers", sum(state.df.Containers, "SizeRw"), (state.df.Containers || []).length],
+        ["Volumes",   sum(state.df.Volumes || [], "Size"), (state.df.Volumes || []).length],
+        ["Build cache", state.df.BuildCacheSize || 0,    (state.df.BuildCache || []).length],
+      ];
+      const total = rows.reduce((a, [, s]) => a + s, 0);
+      return `
+        <div class="surface p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm opacity-70">Total disk usage</div>
+              <div class="text-2xl font-semibold">${fmtBytes(total)}</div>
+            </div>
+            <button class="btn-danger" data-prune="all">Prune unused</button>
+          </div>
+          <table class="w-full text-sm">
+            <thead><tr class="text-left opacity-60">
+              <th class="py-1">Type</th><th>Count</th><th class="text-right">Size</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map(([n, s, c]) => `
+                <tr class="border-t border-line dark:border-line-dark">
+                  <td class="py-2">${n}</td><td>${c}</td><td class="text-right mono">${fmtBytes(s)}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    function renderSettings() {
+      const s = state.system || {};
+      return `<div class="surface p-4 space-y-3 text-sm">
+        <h2 class="text-base font-semibold mb-2">Engine</h2>
+        <dl class="grid grid-cols-[160px_1fr] gap-y-1">
+          <dt class="opacity-60">Detected engine</dt>           <dd class="mono">${escapeHTML(state.health.engine || "?")}</dd>
+          <dt class="opacity-60">Engine version</dt>            <dd class="mono">${escapeHTML(state.health.version || "?")}</dd>
+          <dt class="opacity-60">Server name</dt>               <dd class="mono">${escapeHTML(s.Name || "?")}</dd>
+          <dt class="opacity-60">CPUs</dt>                      <dd>${s.NCPU ?? "?"}</dd>
+          <dt class="opacity-60">Memory</dt>                    <dd>${fmtBytes(s.MemTotal)}</dd>
+          <dt class="opacity-60">OS</dt>                        <dd>${escapeHTML(s.OperatingSystem || "?")}</dd>
+          <dt class="opacity-60">Containers running / total</dt><dd>${s.ContainersRunning ?? "?"} / ${s.Containers ?? "?"}</dd>
+          <dt class="opacity-60">Images</dt>                    <dd>${s.Images ?? "?"}</dd>
+        </dl>
+        <h2 class="text-base font-semibold mt-4 mb-2">About</h2>
+        <p class="opacity-80">Dockyard is local-first. No telemetry, no sign-in. Source: <a class="underline" href="https://github.com/marvelousempire/claude-chat-reader/tree/main/dockyard" target="_blank" rel="noreferrer">claude-chat-reader/dockyard</a>.</p>
+      </div>`;
+    }
+
+    function renderLogs() {
+      const el = document.getElementById("logs-pane");
+      if (el) {
+        el.textContent = state.logs.lines.join("");
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+
+    function renderLogsOverlay() {
+      if (!state.logs.open) return "";
+      return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center px-4 py-8 backdrop-blur-md bg-black/40">
+          <div class="surface w-full max-w-3xl flex flex-col">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-line dark:border-line-dark">
+              <div class="font-medium">Logs · <span class="mono opacity-70">${escapeHTML(shortId(state.logs.id))}</span></div>
+              <button class="btn" data-close-logs>Close</button>
+            </div>
+            <pre id="logs-pane" class="logs-pane"></pre>
+          </div>
+        </div>`;
+    }
+
+    function renderHeader() {
+      return `<header class="flex items-center justify-between px-6 py-4 border-b border-line dark:border-line-dark">
+        <div>
+          <h1 class="text-lg font-semibold">${escapeHTML({
+            compose: "Compose projects",
+            containers: "All containers",
+            images: "Images",
+            volumes: "Volumes",
+            networks: "Networks",
+            disk: "Disk usage",
+            settings: "Settings",
+          }[state.view] || "Dockyard")}</h1>
+          ${state.lastError ? `<div class="text-rose-500 text-[12px] mt-1 mono">${escapeHTML(state.lastError)}</div>` : ""}
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="btn" id="refresh-btn">↻ Refresh</button>
+        </div>
+      </header>`;
+    }
+
+    function renderMain() {
+      const inner = {
+        compose: renderComposeView,
+        containers: renderContainersView,
+        images: renderImagesView,
+        volumes: renderVolumesView,
+        networks: renderNetworksView,
+        disk: renderDiskView,
+        settings: renderSettings,
+      }[state.view] || renderComposeView;
+      return `<main class="flex-1 min-w-0 flex flex-col">
+        ${renderHeader()}
+        <div class="p-6 space-y-3">${inner()}</div>
+      </main>`;
+    }
+
+    function render() {
+      document.getElementById("app").innerHTML = renderSidebar() + renderMain() + renderLogsOverlay();
+      wire();
+    }
+
+    // -------------------------------------------------------------------
+    // Event wiring (delegated)
+    // -------------------------------------------------------------------
+    function wire() {
+      document.querySelectorAll("[data-nav]").forEach((el) => {
+        el.addEventListener("click", () => {
+          state.view = el.dataset.nav;
+          if (state.view === "disk") loadDF();
+          render();
+        });
+      });
+      document.querySelectorAll("[data-act]").forEach((el) => {
+        el.addEventListener("click", () => {
+          const act = el.dataset.act;
+          const id = el.dataset.id;
+          if (act === "logs") return tailLogs(id);
+          containerAction(id, act);
+        });
+      });
+      document.querySelectorAll("[data-img-remove]").forEach((el) => {
+        el.addEventListener("click", async () => {
+          if (!confirm("Remove image " + el.dataset.imgRemove.slice(0, 16) + "…?")) return;
+          try { await api("DELETE", `/api/images/${encodeURIComponent(el.dataset.imgRemove)}`); }
+          catch (e) { alert(e.message); }
+          await refresh();
+        });
+      });
+      const closeBtn = document.querySelector("[data-close-logs]");
+      if (closeBtn) closeBtn.addEventListener("click", closeLogs);
+      const pruneBtn = document.querySelector("[data-prune]");
+      if (pruneBtn) pruneBtn.addEventListener("click", async () => {
+        if (!confirm("Run docker system prune (unused containers / images / volumes / networks)?")) return;
+        try { await api("POST", "/api/system/prune"); await loadDF(); await refresh(); }
+        catch (e) { alert(e.message); }
+      });
+      const refreshBtn = document.getElementById("refresh-btn");
+      if (refreshBtn) refreshBtn.addEventListener("click", refresh);
+      // Theme segmented control
+      document.querySelectorAll("[data-theme-seg] [data-theme]").forEach((el) => {
+        el.addEventListener("click", () => {
+          const t = el.dataset.theme;
+          localStorage.setItem("dockyard.theme", t);
+          document.documentElement.dataset.theme = t;
+          const sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.classList.toggle("dark", t === "dark" || (t === "auto" && sysDark));
+          render();
+        });
+      });
+    }
+
+    // -------------------------------------------------------------------
+    // Boot
+    // -------------------------------------------------------------------
+    refresh();
+    setInterval(refresh, state.refreshMs);
+  </script>
+</body>
+</html>
