@@ -39,8 +39,14 @@ Heals common Docker Desktop hangs, offers Colima install/start, boots Dockyard, 
 ```bash
 git clone https://github.com/marvelousempire/dockyard.git && cd dockyard
 make ui
-# → http://127.0.0.1:4321           (localhost)
-# → http://192.168.x.y:4321         (Wi-Fi — when bound to 0.0.0.0)
+#   ⮕ http://127.0.0.1:4321        (localhost)
+#   ⮕ http://192.168.x.y:4321      (your Wi-Fi LAN)
+```
+
+If Dockyard lives inside a larger monorepo as a `dockyard/` folder:
+
+```bash
+make -C dockyard ui
 ```
 
 Localhost-only (no LAN exposure):
@@ -62,7 +68,7 @@ make doctor         # diagnose host + engine + socket
 From **this repo’s root**:
 
 ```bash
-make mcp
+make mcp <<<'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
 When Dockyard lives **inside** [Claude Archive](https://github.com/marvelousempire/claude-chat-reader) as `dockyard/`:
@@ -70,6 +76,8 @@ When Dockyard lives **inside** [Claude Archive](https://github.com/marvelousempi
 ```bash
 pnpm dockyard:mcp <<<'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
+
+In the Claude Archive monorepo, see [docs/dispatcher.md](./docs/dispatcher.md) for dispatcher wiring.
 
 ### Compose + HTTPS front-door
 
@@ -164,6 +172,9 @@ Persistent defaults live in **`dockyard.config.json`** (port, socket probe order
 
 ## Repository layout
 
+Repository root (this is also the `dockyard/` directory when the
+project is vendored inside another repo):
+
 ```
 dockyard/
 ├── README.md              ← you are here
@@ -185,6 +196,26 @@ dockyard/
 ```
 
 ---
+
+Same layout pattern as [Clinic](https://github.com/marvelousempire/clinic).
+Ships as **[marvelousempire/dockyard](https://github.com/marvelousempire/dockyard)** on GitHub.
+
+## Provenance
+
+Dockyard was incubated inside
+[marvelousempire/claude-chat-reader](https://github.com/marvelousempire/claude-chat-reader)
+(plans 0011 → 0014) and graduated to this standalone repo at
+**v0.3.1**. The parent repo now references this one as a git
+submodule. Same shape as the
+[Clinic](https://github.com/marvelousempire/clinic).
+
+## Read next
+
+1. **[PRD.md](./PRD.md)** — the design and decision record
+2. **[Clinic README](https://github.com/marvelousempire/clinic/blob/main/README.md)**
+   — the pattern Dockyard follows
+3. **[BLUEPRINT.md](https://github.com/marvelousempire/claude-chat-reader/blob/main/BLUEPRINT.md)**
+   — the stack template the parent app (and similar repos) use
 
 ## License
 
