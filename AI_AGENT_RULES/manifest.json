@@ -1,0 +1,78 @@
+{
+  "schema_id": "ai-agent-rules.master",
+  "schema_version": "1.0.0",
+  "content_contract_version": "1.0.0",
+  "repo": {
+    "name": "dockyard",
+    "role": "tooling"
+  },
+  "parent": {
+    "repo": "nephew",
+    "schema_id": "ai-agent-rules.master",
+    "schema_version": "1.0.0"
+  },
+  "sections": [
+    {
+      "id": "readme",
+      "path": "README.md",
+      "required": true,
+      "content_slot": "source_links"
+    },
+    {
+      "id": "orientation",
+      "path": "ORIENTATION.md",
+      "required": true,
+      "content_slot": "orientation"
+    },
+    {
+      "id": "operating_rules",
+      "path": "OPERATING_RULES.md",
+      "required": true,
+      "content_slot": "rules"
+    },
+    {
+      "id": "agent_assignments",
+      "path": "AGENT_ASSIGNMENTS.md",
+      "required": true,
+      "content_slot": "assignments"
+    },
+    {
+      "id": "firing_order",
+      "path": "FIRING_ORDER.md",
+      "required": true,
+      "content_slot": "firing_order"
+    },
+    {
+      "id": "skills",
+      "path": "SKILLS.md",
+      "required": true,
+      "content_slot": "skills"
+    },
+    {
+      "id": "changelog_context",
+      "path": "CHANGELOG_CONTEXT.md",
+      "required": true,
+      "content_slot": "changelog_context"
+    },
+    {
+      "id": "history",
+      "path": "HISTORY.md",
+      "required": true,
+      "content_slot": "history"
+    },
+    {
+      "id": "metadata_post_product",
+      "path": "METADATA_POST_AND_PRODUCT_RULE.md",
+      "required": true,
+      "content_slot": "metadata_post_product"
+    }
+  ],
+  "sources": [
+    "../manifest.json",
+    "../certificate-of-origin.md",
+    "../memory.md",
+    "../lead-sheet.md"
+  ],
+  "children": [],
+  "generated_by": "bishop:create_agent"
+}
