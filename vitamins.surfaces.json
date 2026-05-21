@@ -1,0 +1,27 @@
+{
+  "agent_id": "dockyard",
+  "surfaces": {
+    "brain": {
+      "compose_project": "dockyard-brain",
+      "host_port": 39584,
+      "status": "scaffolded",
+      "provision": "dockyard/brain-template"
+    },
+    "api": {
+      "base_path": "/api/v1",
+      "host_port": 39585,
+      "status": "scaffolded"
+    },
+    "mcp": {
+      "server_name": "dockyard",
+      "transport": "stdio",
+      "entry": "mcp/server.py",
+      "status": "scaffolded"
+    }
+  },
+  "installed": [
+    "rules",
+    "brain",
+    "mcp"
+  ]
+}

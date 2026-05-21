@@ -1,0 +1,11 @@
+# Paste into repo Makefile (Plan 0043)
+BRAIN_DIR := brain
+.PHONY: brain-up brain-down brain-status
+brain-up:
+	@cd $(BRAIN_DIR) && test -f .env || cp .env.example .env
+	@cd $(BRAIN_DIR) && docker compose up -d
+brain-down:
+	@cd $(BRAIN_DIR) && docker compose down
+brain-status:
+	@cd $(BRAIN_DIR) && docker compose ps
+	@cd $(BRAIN_DIR) && docker compose exec -T db pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB) || true

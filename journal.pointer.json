@@ -1,0 +1,10 @@
+{
+  "schema_id": "nephew.journal.pointer",
+  "schema_version": "1.0.0",
+  "agent_id": "dockyard",
+  "display_name": "Dockyard",
+  "upstream_node": "Journal/by-agent/dockyard/",
+  "nephew_root_env": "NEPHEW_ROOT",
+  "default_report_hint": "Journal/reports/",
+  "rule": "NEPHEW_ROOT/AI_AGENT_RULES/NEPHEW_JOURNAL_RULE.md"
+}

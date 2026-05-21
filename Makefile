@@ -17,7 +17,9 @@ PORT     ?= $(shell python3 -c "import json,sys; sys.stdout.write(str(json.load(
 PY       ?= python3
 HERE     := $(shell pwd)
 
-.PHONY: help boot ui ui-local run open doctor test test-unit test-integration mcp clean status docker-build docker-run
+.PHONY: help boot ui ui-local run open doctor test test-unit test-integration mcp clean status docker-build docker-run brain-up brain-down brain-status
+
+BRAIN_DIR := brain
 
 help:
 	@echo "Dockyard targets (port=$(PORT)):"
@@ -91,3 +93,14 @@ clean:
 	@find . -name "*.pyc" -delete 2>/dev/null || true
 	@rm -f /tmp/dockyard-*.log 2>/dev/null || true
 	@echo "✅ cleaned"
+
+brain-up:
+	@cd $(BRAIN_DIR) && test -f .env || cp .env.example .env
+	@cd $(BRAIN_DIR) && docker compose up -d
+
+brain-down:
+	@cd $(BRAIN_DIR) && docker compose down
+
+brain-status:
+	@cd $(BRAIN_DIR) && docker compose ps
+	@cd $(BRAIN_DIR) && docker compose exec -T db pg_isready -U dockyard -d dockyard_brain || true
