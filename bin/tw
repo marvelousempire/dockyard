@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# dockyard/bin/tw — Tailwind v4 standalone CLI shim.
+#
+# Why: dockyard ships zero npm. Tailwind v4 has an official standalone
+# binary (single executable, no node_modules). This script fetches it on
+# first use to bin/.cache/tailwindcss-<version> and execs it with the
+# arguments passed in.
+#
+# Usage:
+#   bin/tw -i web/styles/input.css -o web/static/dockyard.css        # build
+#   bin/tw -i web/styles/input.css -o web/static/dockyard.css --watch # watch
+#
+# The Makefile wraps this in `make tw-build` / `make tw-watch`.
+
+set -euo pipefail
+
+VERSION="${TW_VERSION:-v4.1.13}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CACHE_DIR="$HERE/bin/.cache"
+BIN="$CACHE_DIR/tailwindcss-$VERSION"
+
+# Detect host triple for the release asset name.
+os="$(uname -s)"
+arch="$(uname -m)"
+case "$os/$arch" in
+  Darwin/arm64)  asset="tailwindcss-macos-arm64" ;;
+  Darwin/x86_64) asset="tailwindcss-macos-x64" ;;
+  Linux/x86_64)  asset="tailwindcss-linux-x64" ;;
+  Linux/aarch64) asset="tailwindcss-linux-arm64" ;;
+  *) echo "tw: unsupported host $os/$arch — see https://github.com/tailwindlabs/tailwindcss/releases" >&2; exit 1 ;;
+esac
+
+if [ ! -x "$BIN" ]; then
+  mkdir -p "$CACHE_DIR"
+  url="https://github.com/tailwindlabs/tailwindcss/releases/download/$VERSION/$asset"
+  echo "tw: fetching Tailwind $VERSION standalone ($asset)" >&2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$BIN" "$url" || { echo "tw: download failed: $url" >&2; rm -f "$BIN"; exit 1; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$BIN" "$url" || { echo "tw: download failed: $url" >&2; rm -f "$BIN"; exit 1; }
+  else
+    echo "tw: need curl or wget to download tailwindcss" >&2; exit 1
+  fi
+  chmod +x "$BIN"
+fi
+
+exec "$BIN" "$@"

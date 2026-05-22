@@ -75,9 +75,19 @@ PY
 detect_engine() {
   # Colima first (preferred — PRD 0011)
   if command -v colima >/dev/null 2>&1; then
-    if colima status 2>&1 | grep -qi "running"; then
-      ENGINE="colima"
-      SOCKET="$HOME/.colima/default/docker.sock"
+    # Use exit code, NOT grep — `colima status` prints "colima is not running"
+    # to stderr when down, and a grep for "running" matches both states.
+    if colima status >/dev/null 2>&1; then
+      local colima_sock="$HOME/.colima/default/docker.sock"
+      # Colima reports running — verify the socket actually answers before
+      # trusting it. A zero-byte stale sock from a prior crash is common.
+      if curl -fsS --max-time 3 --unix-socket "$colima_sock" http://localhost/_ping >/dev/null 2>&1; then
+        ENGINE="colima"
+        SOCKET="$colima_sock"
+        return
+      fi
+      ENGINE="colima-hung"
+      SOCKET="$colima_sock"
       return
     fi
   fi
@@ -169,7 +179,7 @@ ensure_colima() {
 
 # ── 6. Start Colima ─────────────────────────────────────────────────
 start_colima() {
-  if colima status 2>&1 | grep -qi "running"; then
+  if colima status >/dev/null 2>&1; then
     ok "Colima already running"
   else
     step "Starting Colima (this takes ~30s on first boot)"
@@ -177,6 +187,16 @@ start_colima() {
       || { fail "colima start failed"; return 1; }
     ok "Colima started"
   fi
+  ENGINE="colima"
+  SOCKET="$HOME/.colima/default/docker.sock"
+}
+
+# ── 6b. Restart Colima when its socket is hung ──────────────────────
+restart_colima() {
+  warn "Colima reports running but its socket is unreachable — restarting"
+  colima restart \
+    || { fail "colima restart failed — try: ${W}colima stop && colima start${N}"; return 1; }
+  ok "Colima restarted"
   ENGINE="colima"
   SOCKET="$HOME/.colima/default/docker.sock"
 }
@@ -269,6 +289,9 @@ note "Current engine: $ENGINE"
 case "$ENGINE" in
   colima)
     ok "Colima already up — nothing to heal"
+    ;;
+  colima-hung)
+    restart_colima || exit 1
     ;;
   docker-desktop)
     if [ -n "${DOCKYARD_FORCE_SWEEP:-}" ]; then

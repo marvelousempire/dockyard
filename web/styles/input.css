@@ -1,0 +1,210 @@
+/* Dockyard — Tailwind v4 source.
+ * Compile:  bin/tw -i web/styles/input.css -o web/static/dockyard.css
+ * Watch:    bin/tw -i web/styles/input.css -o web/static/dockyard.css --watch
+ * Or:       make tw-build / make tw-watch (from dockyard repo root)
+ */
+
+@import "tailwindcss";
+
+/* ───────────────────────────────────────────────────────────────────
+ * Cascade layers — make our overrides predictable.
+ * ─────────────────────────────────────────────────────────────────── */
+@layer base, components, utilities;
+
+/* ───────────────────────────────────────────────────────────────────
+ * Theme — Tailwind v4 `@theme` block.
+ * Generates CSS variables AND utility classes (bg-accent, text-ink, etc.).
+ * Migrated from the old inline tailwind.config and re-expressed in OKLCH
+ * so dark-mode mixes stay perceptually uniform.
+ * ─────────────────────────────────────────────────────────────────── */
+@theme {
+  /* Brand */
+  --color-accent:    oklch(54% 0.10 168);   /* was #0E7C66 */
+  --color-accent-2:  oklch(66% 0.13 168);   /* was #11A488 */
+
+  /* Surfaces — light */
+  --color-paper:     oklch(98.5% 0.005 95); /* was #FAFAF7 */
+  --color-paper-2:   oklch(94%   0.006 95); /* was #F1F1EC */
+  --color-line:      oklch(90%   0.006 95); /* was #E5E5DD */
+
+  /* Surfaces — dark */
+  --color-ink:       oklch(15% 0.012 240);  /* was #0B1115 */
+  --color-ink-2:     oklch(21% 0.014 240);  /* was #141C22 */
+  --color-line-dark: oklch(31% 0.015 235);  /* was #2A343C */
+
+  /* Type stacks */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Motion — single source of truth for transitions */
+  --ease-spring: linear(0, 0.4 12%, 0.85 28%, 1.05 42%, 0.99 60%, 1);
+  --dur-fast:   120ms;
+  --dur-base:   220ms;
+  --dur-slow:   400ms;
+}
+
+/* Dark mode via `.dark` class (matches the existing pre-paint script). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ───────────────────────────────────────────────────────────────────
+ * Base layer — global resets + modern-CSS niceties.
+ * ─────────────────────────────────────────────────────────────────── */
+@layer base {
+  :root {
+    color-scheme: light dark;
+    /* Smooth crossfade on theme toggle (Chromium today, Firefox/Safari incoming). */
+    view-transition-name: root;
+  }
+
+  /* Theme toggle = full-page crossfade instead of a flash. */
+  @media (prefers-reduced-motion: no-preference) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+      animation-duration: var(--dur-base);
+      animation-timing-function: var(--ease-spring);
+    }
+  }
+
+  /* Scrollbars — quietly modern, no JS. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, currentColor 25%, transparent) transparent;
+  }
+
+  /* Selection uses the accent. */
+  ::selection {
+    background: color-mix(in oklch, var(--color-accent) 40%, transparent);
+  }
+
+  /* Default body — keeps the existing markup looking right. */
+  html, body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .dark html, .dark body, html.dark, body:where(.dark *) {
+    background: var(--color-ink);
+    color: var(--color-paper);
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────
+ * Components — reusable patterns.
+ *   .panel              → bordered surface with container-query support
+ *   .panel-grid         → grid that re-flows based on the panel's own width
+ *   .pill               → status pill (running / exited / etc.)
+ *   .row-enter          → starting-style fade for newly-added list items
+ *   .v-card             → containers/images/etc. card with hover lift
+ * ─────────────────────────────────────────────────────────────────── */
+@layer components {
+  .panel {
+    container-type: inline-size;
+    container-name: panel;
+    background: var(--color-paper-2);
+    border: 1px solid var(--color-line);
+    border-radius: 0.75rem;
+    padding: 1rem;
+  }
+  .dark .panel {
+    background: var(--color-ink-2);
+    border-color: var(--color-line-dark);
+  }
+
+  /* Container query: re-flow grid based on the panel's own width, not viewport. */
+  .panel-grid {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: 1fr;
+  }
+  @container panel (min-width: 32rem) {
+    .panel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container panel (min-width: 56rem) {
+    .panel-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+
+  .pill {
+    display: inline-flex; align-items: center;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem; font-weight: 500;
+    background: color-mix(in oklch, currentColor 12%, transparent);
+    transition: background var(--dur-fast) ease;
+  }
+  .pill:hover {
+    background: color-mix(in oklch, currentColor 20%, transparent);
+  }
+
+  /* Starting style: any element with this class fades in on first paint.
+   * Works for dynamically-added rows (logs, containers, image-pull progress). */
+  .row-enter {
+    transition: opacity var(--dur-base) ease, transform var(--dur-base) var(--ease-spring);
+  }
+  @starting-style {
+    .row-enter {
+      opacity: 0;
+      transform: translateY(0.25rem);
+    }
+  }
+
+  .v-card {
+    background: var(--color-paper-2);
+    border: 1px solid var(--color-line);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    transition: transform var(--dur-fast) var(--ease-spring),
+                border-color var(--dur-fast) ease,
+                background var(--dur-fast) ease;
+  }
+  .v-card:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in oklch, var(--color-accent) 50%, var(--color-line));
+    background: color-mix(in oklch, var(--color-accent) 4%, var(--color-paper-2));
+  }
+  .dark .v-card {
+    background: var(--color-ink-2);
+    border-color: var(--color-line-dark);
+  }
+  .dark .v-card:hover {
+    border-color: color-mix(in oklch, var(--color-accent-2) 60%, var(--color-line-dark));
+    background: color-mix(in oklch, var(--color-accent-2) 6%, var(--color-ink-2));
+  }
+
+  /* :has() — a panel containing an error row paints a thin warning rail. */
+  .panel:has(.is-error) {
+    border-left: 3px solid oklch(60% 0.18 25);
+  }
+  .panel:has(.is-warn) {
+    border-left: 3px solid oklch(75% 0.15 85);
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────
+ * Utilities — handful of opinionated helpers the SPA uses.
+ * ─────────────────────────────────────────────────────────────────── */
+@layer utilities {
+  /* Scroll-driven animation: list items fade as they enter the scroll viewport.
+   * Progressive enhancement — silently no-ops on browsers without support. */
+  @supports (animation-timeline: view()) {
+    .reveal-on-scroll {
+      animation: reveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 40%;
+    }
+    @keyframes reveal {
+      from { opacity: 0; transform: translateY(0.5rem); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  }
+
+  /* Honor the OS — kill all motion when the user has asked for it. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
