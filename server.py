@@ -17,6 +17,7 @@ import argparse
 import http.client
 import json
 import os
+import shutil
 import socket
 import sys
 import threading
@@ -137,6 +138,8 @@ class DockyardHandler(BaseHTTPRequestHandler):
                 return self._proxy_json("GET", "/networks")
             if path == "/api/health":
                 return self._serve_health()
+            if path == "/api/host/disk":
+                return self._serve_host_disk()
             if path.startswith("/api/containers/") and path.endswith("/logs"):
                 cid = path.split("/")[3]
                 return self._stream_logs(cid, query)
@@ -287,6 +290,25 @@ class DockyardHandler(BaseHTTPRequestHandler):
                 "version": version,
             },
         )
+
+    def _serve_host_disk(self) -> None:
+        try:
+            usage = shutil.disk_usage("/")
+            total = usage.total
+            used = usage.used
+            free = usage.free
+            percent_used = round((used / total) * 100) if total > 0 else 0
+            self._send_json(
+                200,
+                {
+                    "total": total,
+                    "used": used,
+                    "free": free,
+                    "percent_used": percent_used,
+                },
+            )
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
 
     def _proxy_json(self, method: str, docker_path: str) -> None:
         status, _hdrs, body = docker_request(self.socket_path, method, docker_path)

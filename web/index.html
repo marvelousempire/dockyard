@@ -95,6 +95,7 @@
       system: null,
       health: { reachable: null, engine: "?", version: "?" },
       df: null,
+      hostDisk: null,
       logs: { open: false, id: null, lines: [], abort: null },
       pull: { open: false, name: "", lines: [], running: false, abort: null },
       busyIds: new Set(),
@@ -258,6 +259,8 @@
         state.system = system;
         state.health = health;
         state.lastError = null;
+        // Load host disk info in background
+        loadHostDisk();
         // Refresh stats for running containers (one-shot)
         refreshStats(containers).catch(() => {});
       } catch (e) {
@@ -305,6 +308,11 @@
       try { state.df = await api("GET", "/api/system/df"); }
       catch (e) { state.lastError = e.message; }
       render();
+    }
+
+    async function loadHostDisk() {
+      try { state.hostDisk = await api("GET", "/api/host/disk"); }
+      catch (e) { /* silent */ }
     }
 
     async function containerAction(id, action) {
@@ -739,6 +747,16 @@
       const verPill = state.health.reachable
         ? `<span class="ver-pill">engine ${escapeHTML(state.health.engine)} · ${escapeHTML(state.health.version || "?")}</span>`
         : `<span class="pill-red">engine unreachable</span>`;
+      const diskWarning = (() => {
+        if (!state.hostDisk) return "";
+        const percentFree = 100 - state.hostDisk.percent_used;
+        const freeMB = Math.round(state.hostDisk.free / (1024 * 1024));
+        if (percentFree < 5 || freeMB < 500) {
+          const label = freeMB < 100 ? `${freeMB}MB left!` : `${percentFree}% free`;
+          return `<span class="pill-red" title="Low disk space — run Dustpan to clean">⚠ ${label}</span>`;
+        }
+        return "";
+      })();
       const pullBtn = (state.view === "images")
         ? `<button class="btn-primary" data-pull-open>+ Pull image</button>`
         : "";
@@ -747,6 +765,7 @@
           <div class="flex items-center gap-2">
             <h1 class="text-lg font-semibold">${escapeHTML(titles[state.view] || "Dockyard")}</h1>
             ${verPill}
+            ${diskWarning}
           </div>
           ${state.lastError ? `<div class="text-rose-500 text-[12px] mt-1 mono">${escapeHTML(state.lastError)}</div>` : ""}
         </div>
