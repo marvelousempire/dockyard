@@ -14,12 +14,15 @@ Run:
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import http.client
 import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
+import tempfile
 import threading
 import urllib.parse
 import webbrowser
@@ -180,6 +183,8 @@ class DockyardHandler(BaseHTTPRequestHandler):
                 return self._pull_image(query)
             if path == "/api/system/prune":
                 return self._system_prune(query)
+            if path == "/api/host/disk/snapshot":
+                return self._serve_host_disk_snapshot()
             if path == "/api/socket/swap":
                 return self._swap_socket()
             if path.startswith("/api/projects/") and path.endswith("/restart"):
@@ -291,23 +296,145 @@ class DockyardHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _disk_block(self, path: str) -> dict | None:
+        """Return {total, used, free, percent_used, path} or None if unreadable."""
+        try:
+            usage = shutil.disk_usage(path)
+            total, used, free = usage.total, usage.used, usage.free
+            return {
+                "path": path,
+                "total": total,
+                "used": used,
+                "free": free,
+                "percent_used": round((used / total) * 100) if total > 0 else 0,
+            }
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _docker_info_safe(self) -> dict:
+        """Fetch Docker /info; empty dict on any failure."""
+        try:
+            status, _h, body = docker_request(self.socket_path, "GET", "/info", timeout=2.0)
+            if status >= 400:
+                return {}
+            return json.loads(body)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _docker_layers_bytes_safe(self) -> int:
+        """Sum of image LayersSize from /system/df; 0 on failure."""
+        try:
+            status, _h, body = docker_request(self.socket_path, "GET", "/system/df", timeout=3.0)
+            if status >= 400:
+                return 0
+            df = json.loads(body)
+            return int(df.get("LayersSize") or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+
     def _serve_host_disk(self) -> None:
         try:
-            usage = shutil.disk_usage("/")
-            total = usage.total
-            used = usage.used
-            free = usage.free
-            percent_used = round((used / total) * 100) if total > 0 else 0
+            host_block = self._disk_block("/")
+            info = self._docker_info_safe()
+            docker_root_path = info.get("DockerRootDir") or ""
+            docker_root_block = None
+            if docker_root_path and os.path.exists(docker_root_path):
+                # Only readable when DockerRootDir is on the host (Linux native,
+                # rootless, etc). On Colima/macOS this lives inside the VM —
+                # path won't exist locally and we surface null.
+                docker_root_block = self._disk_block(docker_root_path)
             self._send_json(
                 200,
                 {
-                    "total": total,
-                    "used": used,
-                    "free": free,
-                    "percent_used": percent_used,
+                    "host": host_block,
+                    "docker_root": docker_root_block,
+                    "docker_layers_bytes": self._docker_layers_bytes_safe(),
+                    # Legacy top-level fields — keep them so older clients don't break.
+                    "total": host_block["total"] if host_block else 0,
+                    "used": host_block["used"] if host_block else 0,
+                    "free": host_block["free"] if host_block else 0,
+                    "percent_used": host_block["percent_used"] if host_block else 0,
                 },
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
+            self._send_json(500, {"error": str(e)})
+
+    def _serve_host_disk_snapshot(self) -> None:
+        """Write a debug bundle (df + docker df + /info) to /tmp; return path.
+
+        Plan 0005 Task G — snapshot-on-warn. The UI fires this once per session
+        when the disk-warning threshold first trips, so a post-mortem has
+        the exact state at the moment things went sideways.
+        """
+        try:
+            ts = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+            out_path = os.path.join(tempfile.gettempdir(), f"dockyard-disk-warn-{ts}.txt")
+            lines: list[str] = [
+                f"# Dockyard disk-warn snapshot — {_dt.datetime.now().isoformat()}",
+                f"# engine={self.engine} socket={self.socket_path}",
+                "",
+                "## df -h /",
+            ]
+            try:
+                proc = subprocess.run(
+                    ["df", "-h", "/"], capture_output=True, text=True, timeout=5
+                )
+                lines.append(proc.stdout.strip() or "(no output)")
+                if proc.stderr.strip():
+                    lines.append(f"stderr: {proc.stderr.strip()}")
+            except Exception as e:  # noqa: BLE001
+                lines.append(f"(df failed: {e})")
+
+            info = self._docker_info_safe()
+            lines += [
+                "",
+                "## docker /info (summary)",
+                f"ServerVersion: {info.get('ServerVersion', '?')}",
+                f"OperatingSystem: {info.get('OperatingSystem', '?')}",
+                f"Driver: {info.get('Driver', '?')}",
+                f"DockerRootDir: {info.get('DockerRootDir', '?')}",
+                f"Containers: {info.get('Containers', '?')} "
+                f"(running={info.get('ContainersRunning', '?')}, "
+                f"stopped={info.get('ContainersStopped', '?')})",
+                f"Images: {info.get('Images', '?')}",
+            ]
+
+            try:
+                status, _h, body = docker_request(
+                    self.socket_path, "GET", "/system/df", timeout=5.0
+                )
+                if status < 400:
+                    df = json.loads(body)
+                    lines += [
+                        "",
+                        "## docker /system/df",
+                        f"LayersSize: {df.get('LayersSize', 0)}",
+                    ]
+                    imgs = sorted(
+                        df.get("Images") or [], key=lambda i: i.get("Size", 0), reverse=True
+                    )[:10]
+                    if imgs:
+                        lines.append("")
+                        lines.append("Top 10 images by size:")
+                        for img in imgs:
+                            tags = ",".join(img.get("RepoTags") or []) or "<none>"
+                            lines.append(f"  {img.get('Size', 0):>14}  {tags}")
+                    vols = sorted(
+                        df.get("Volumes") or [], key=lambda v: (v.get("UsageData") or {}).get("Size", 0), reverse=True
+                    )[:10]
+                    if vols:
+                        lines.append("")
+                        lines.append("Top 10 volumes by size:")
+                        for vol in vols:
+                            size = (vol.get("UsageData") or {}).get("Size", 0)
+                            lines.append(f"  {size:>14}  {vol.get('Name', '?')}")
+            except Exception as e:  # noqa: BLE001
+                lines.append(f"\n(system/df failed: {e})")
+
+            with open(out_path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+            self._send_json(200, {"path": out_path, "bytes": os.path.getsize(out_path)})
+        except Exception as e:  # noqa: BLE001
             self._send_json(500, {"error": str(e)})
 
     def _proxy_json(self, method: str, docker_path: str) -> None:

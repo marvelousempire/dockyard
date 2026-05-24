@@ -17,7 +17,7 @@ PORT     ?= $(shell python3 -c "import json,sys; sys.stdout.write(str(json.load(
 PY       ?= python3
 HERE     := $(shell pwd)
 
-.PHONY: help boot ui ui-local run open doctor test test-unit test-integration mcp clean status docker-build docker-run brain-up brain-down brain-status
+.PHONY: help boot ui ui-local run open doctor test test-unit test-integration mcp clean status docker-build docker-run brain-up brain-down brain-status tw-build tw-watch
 
 BRAIN_DIR := brain
 
@@ -75,6 +75,7 @@ test: test-unit test-integration
 
 test-unit:
 	@$(PY) -m unittest discover -s tests -p "test_socket.py" -v
+	@bash tests/test_bin_go_engine_detection.sh
 
 test-integration:
 	@$(PY) -m unittest discover -s tests -p "test_endpoints.py" -v
@@ -104,3 +105,12 @@ brain-down:
 brain-status:
 	@cd $(BRAIN_DIR) && docker compose ps
 	@cd $(BRAIN_DIR) && docker compose exec -T db pg_isready -U dockyard -d dockyard_brain || true
+
+# Tailwind v4 — one-shot compile from web/styles/input.css → web/static/dockyard.css.
+# bin/go also runs this on boot when the source is newer than the artifact.
+tw-build:
+	@bash bin/tw -i web/styles/input.css -o web/static/dockyard.css --minify
+
+# Tailwind v4 — watch mode for active CSS development.
+tw-watch:
+	@bash bin/tw -i web/styles/input.css -o web/static/dockyard.css --watch

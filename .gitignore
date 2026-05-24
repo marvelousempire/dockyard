@@ -1,1 +1,3 @@
 bin/.cache/
+# Tailwind compile artifact — produced by bin/go on boot from web/styles/input.css.
+web/static/dockyard.css

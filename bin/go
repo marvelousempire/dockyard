@@ -212,6 +212,28 @@ probe_socket() {
   return 1
 }
 
+# ── 7b. Compile Tailwind CSS if source is newer than artifact ───────
+# Idempotent. Falls back to a no-op + warning if the CLI is unavailable;
+# the SPA degrades to an unstyled state rather than a hard-down.
+compile_css() {
+  local src="$HERE/web/styles/input.css"
+  local out="$HERE/web/static/dockyard.css"
+  [ -f "$src" ] || return 0
+  if [ -f "$out" ] && [ "$src" -ot "$out" ] && [ -s "$out" ]; then
+    return 0
+  fi
+  if [ ! -x "$HERE/bin/tw" ]; then
+    warn "bin/tw missing — skipping CSS compile (UI will be unstyled)"
+    return 0
+  fi
+  step "Compiling Tailwind CSS (one-time per source change)"
+  if "$HERE/bin/tw" -i "$src" -o "$out" --minify >/dev/null 2>&1; then
+    ok "CSS compiled → web/static/dockyard.css ($(wc -c <"$out" | tr -d ' ') bytes)"
+  else
+    warn "Tailwind compile failed — UI will fall back to unstyled. See: bin/tw -i $src -o $out"
+  fi
+}
+
 # ── 8. Boot Dockyard server ─────────────────────────────────────────
 boot_dockyard() {
   # If already up on this port, skip the relaunch
@@ -323,6 +345,8 @@ case "$ENGINE" in
 esac
 
 probe_socket || { fail "Engine started but socket not reachable"; exit 1; }
+
+compile_css
 
 boot_dockyard || exit 1
 

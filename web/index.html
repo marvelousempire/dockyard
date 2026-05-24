@@ -5,9 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dockyard</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Compiled by bin/go (or `make tw-build`) from web/styles/input.css.
+       The CDN-runtime build is gone; the artifact is gitignored and re-emitted on boot. -->
+  <link rel="stylesheet" href="/static/dockyard.css" />
   <script>
-    // Pre-paint theme — runs BEFORE Tailwind so first paint is correct.
+    // Pre-paint theme — runs BEFORE the stylesheet applies, so first paint is correct.
     // Reads localStorage first, falls back to /api/config default_theme,
     // falls back to "auto".
     (function () {
@@ -17,66 +19,12 @@
       document.documentElement.classList.toggle("dark", isDark);
       document.documentElement.dataset.theme = saved;
     })();
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            // Defaults — overridden by /api/config branding.accent at runtime
-            accent: "#0E7C66",
-            "accent-2": "#11A488",
-            ink: "#0B1115",
-            "ink-2": "#141C22",
-            paper: "#FAFAF7",
-            "paper-2": "#F1F1EC",
-            line: "#E5E5DD",
-            "line-dark": "#2A343C",
-          },
-          fontFamily: {
-            sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
-            mono: ["ui-monospace", "SF Mono", "Menlo", "Consolas", "monospace"],
-          },
-        },
-      },
-    };
   </script>
   <style>
+    /* Runtime-mutable CSS vars: JS rewrites these from /api/config branding.accent.
+       Everything else lives in /static/dockyard.css. */
     :root { --dy-accent: #0E7C66; --dy-accent-2: #11A488; }
     html, body { height: 100%; }
-    body { font-family: ui-sans-serif, system-ui, sans-serif; }
-    .pill { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium; }
-    .pill-green { @apply pill bg-emerald-500/15 text-emerald-700 dark:text-emerald-300; }
-    .pill-red   { @apply pill bg-rose-500/15 text-rose-700 dark:text-rose-300; }
-    .pill-amber { @apply pill bg-amber-500/15 text-amber-800 dark:text-amber-300; }
-    .pill-zinc  { @apply pill bg-zinc-500/15 text-zinc-700 dark:text-zinc-300; }
-    .pill-accent { @apply pill; background: color-mix(in srgb, var(--dy-accent) 15%, transparent); color: var(--dy-accent); }
-    .btn { @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-md border border-line dark:border-line-dark hover:bg-paper-2 dark:hover:bg-ink-2 transition-colors; }
-    .btn-primary { @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-md text-white border transition-colors; background: var(--dy-accent); border-color: var(--dy-accent); }
-    .btn-primary:hover { background: var(--dy-accent-2); }
-    .btn-danger { @apply btn text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30; }
-    .surface { @apply bg-white dark:bg-ink-2 border border-line dark:border-line-dark rounded-lg; }
-    .surface-subtle { @apply bg-paper dark:bg-ink rounded-md; }
-    .nav-item { @apply flex items-center gap-2 px-3 py-2 rounded-md text-sm text-zinc-700 dark:text-zinc-300 hover:bg-paper-2 dark:hover:bg-ink-2 cursor-pointer transition-colors; }
-    .nav-item.active { background: color-mix(in srgb, var(--dy-accent) 12%, transparent); color: var(--dy-accent); font-weight: 500; }
-    .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-    .logs-pane { @apply mono text-[12px] leading-snug whitespace-pre-wrap p-3 max-h-[60vh] overflow-y-auto bg-ink text-emerald-200 dark:bg-black; }
-    .theme-seg { @apply flex items-center rounded-md border border-line dark:border-line-dark p-0.5 text-[11px]; }
-    .theme-seg button { @apply px-2 py-1 rounded; }
-    .theme-seg button.on { background: var(--dy-accent); color: white; }
-    .sidebar::-webkit-scrollbar { width: 6px; }
-    .sidebar::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.25); border-radius: 3px; }
-    .ver-pill { @apply pill text-[10px] mono; background: color-mix(in srgb, var(--dy-accent) 12%, transparent); color: var(--dy-accent); }
-    /* Sparkline */
-    .spark { width: 70px; height: 22px; vertical-align: middle; }
-    .spark-cpu { stroke: var(--dy-accent); }
-    .spark-mem { stroke: #f59e0b; }
-    /* Drag-to-prune */
-    .trash-zone { @apply border-2 border-dashed rounded-lg p-4 text-center text-sm transition-colors; border-color: var(--dy-accent); }
-    .trash-zone.over { background: color-mix(in srgb, #f43f5e 18%, transparent); border-color: #f43f5e; color: #be123c; }
-    .draggable { @apply cursor-grab; }
-    .draggable:active { @apply cursor-grabbing; }
-    .ai-assist { @apply text-[12px] flex items-center gap-1; color: var(--dy-accent); }
-    .ai-assist:hover { text-decoration: underline; }
   </style>
 </head>
 <body class="bg-paper text-ink dark:bg-ink dark:text-paper">
@@ -96,6 +44,12 @@
       health: { reachable: null, engine: "?", version: "?" },
       df: null,
       hostDisk: null,
+      diskSeries: [],     // [{t: ms, percentUsed: 0..100, freeBytes: number}] — for sparkline + prediction
+      diskWarnPercent: 5,
+      diskWarnMb: 500,
+      diskPollMs: 10000,
+      diskWarnSnapshotTaken: false,  // dedupe snapshot-on-warn per session
+      diskModal: { open: false, pruning: false, result: null, freedBytes: null },
       logs: { open: false, id: null, lines: [], abort: null },
       pull: { open: false, name: "", lines: [], running: false, abort: null },
       busyIds: new Set(),
@@ -203,6 +157,9 @@
         }
         if (cfg.ui && cfg.ui.refresh_ms) state.refreshMs = cfg.ui.refresh_ms;
         if (cfg.ui && cfg.ui.sparkline_seconds) state.sparkSeconds = cfg.ui.sparkline_seconds;
+        if (cfg.ui && typeof cfg.ui.disk_warn_percent === "number") state.diskWarnPercent = cfg.ui.disk_warn_percent;
+        if (cfg.ui && typeof cfg.ui.disk_warn_mb === "number") state.diskWarnMb = cfg.ui.disk_warn_mb;
+        if (cfg.ui && typeof cfg.ui.disk_warn_poll_seconds === "number") state.diskPollMs = cfg.ui.disk_warn_poll_seconds * 1000;
         if (cfg.ui && cfg.ui.default_view && !sessionStorage.getItem("dockyard.view")) {
           state.view = cfg.ui.default_view;
         }
@@ -259,8 +216,7 @@
         state.system = system;
         state.health = health;
         state.lastError = null;
-        // Load host disk info in background
-        loadHostDisk();
+        // (Disk polling runs on its own slower setInterval — see boot.)
         // Refresh stats for running containers (one-shot)
         refreshStats(containers).catch(() => {});
       } catch (e) {
@@ -311,8 +267,204 @@
     }
 
     async function loadHostDisk() {
-      try { state.hostDisk = await api("GET", "/api/host/disk"); }
-      catch (e) { /* silent */ }
+      try {
+        const d = await api("GET", "/api/host/disk");
+        state.hostDisk = d;
+        // Sample for sparkline + prediction. Worst-of host vs docker_root.
+        const worst = worstDisk(d);
+        if (worst) {
+          state.diskSeries.push({
+            t: Date.now(),
+            percentUsed: worst.percent_used,
+            freeBytes: worst.free,
+          });
+          const cutoff = Date.now() - state.sparkSeconds * 1000 * 6;  // keep 6× spark window for regression
+          state.diskSeries = state.diskSeries.filter((p) => p.t >= cutoff);
+        }
+        // Snapshot-on-warn (Task G): fire once per session when we first cross the threshold.
+        if (worst && !state.diskWarnSnapshotTaken && diskIsLow(worst)) {
+          state.diskWarnSnapshotTaken = true;
+          api("POST", "/api/host/disk/snapshot")
+            .then((r) => { console.log("[dockyard] disk-warn snapshot →", r.path); })
+            .catch(() => { /* non-fatal */ });
+        }
+        // Re-render the header (cheap — we own that span).
+        const headerDisk = document.querySelector("[data-disk-badge-slot]");
+        if (headerDisk) headerDisk.innerHTML = renderDiskBadge();
+        wireDiskBadge();
+      } catch (e) { /* silent */ }
+    }
+
+    // ── Disk helpers (Plan 0005 Tasks C/D/E/F) ────────────────────────
+    function worstDisk(d) {
+      // The disk most likely to bite us first. Prefer whichever has lower free%.
+      if (!d) return null;
+      const candidates = [d.host, d.docker_root].filter(Boolean);
+      if (!candidates.length && d.percent_used != null) {
+        // Legacy flat shape — synthesize a block.
+        return { total: d.total, used: d.used, free: d.free, percent_used: d.percent_used, path: "/" };
+      }
+      candidates.sort((a, b) => (100 - a.percent_used) - (100 - b.percent_used));
+      return candidates[0];
+    }
+    function diskIsLow(block) {
+      if (!block) return false;
+      const percentFree = 100 - block.percent_used;
+      const freeMB = Math.round(block.free / (1024 * 1024));
+      return percentFree < state.diskWarnPercent || freeMB < state.diskWarnMb;
+    }
+    function predictTimeToFull(series) {
+      // Linear regression on free-bytes over time. Returns ms-to-zero if slope < 0; else null.
+      if (!series || series.length < 4) return null;
+      const t0 = series[0].t;
+      const N = series.length;
+      let sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (const p of series) {
+        const x = (p.t - t0) / 1000;  // seconds
+        const y = p.freeBytes;
+        sx += x; sy += y; sxx += x * x; sxy += x * y;
+      }
+      const denom = N * sxx - sx * sx;
+      if (denom <= 1e-6) return null;
+      const slope = (N * sxy - sx * sy) / denom;  // bytes per second
+      if (slope >= -1) return null;  // not draining (epsilon: ignore <1 B/s)
+      const last = series[series.length - 1];
+      const secondsToZero = last.freeBytes / -slope;
+      if (secondsToZero <= 0 || !isFinite(secondsToZero)) return null;
+      return secondsToZero * 1000;
+    }
+    function fmtDuration(ms) {
+      if (!ms || !isFinite(ms)) return "—";
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return s + "s";
+      if (s < 3600) return Math.floor(s / 60) + "m";
+      if (s < 86400) return Math.floor(s / 3600) + "h";
+      return Math.floor(s / 86400) + "d";
+    }
+    function diskSparkSvg() {
+      const series = state.diskSeries;
+      if (series.length < 2) return "";
+      const points = series.map((p) => p.percentUsed);
+      return `<svg class="spark-mini" viewBox="0 0 100 30" preserveAspectRatio="none">${sparkPath(points, "spark-disk")}</svg>`;
+    }
+
+    function renderDiskBadge() {
+      // The clickable header badge — only renders when worst-disk is below threshold.
+      const d = state.hostDisk;
+      if (!d) return "";
+      const worst = worstDisk(d);
+      if (!worst || !diskIsLow(worst)) return "";
+      const percentFree = 100 - worst.percent_used;
+      const freeMB = Math.round(worst.free / (1024 * 1024));
+      const ttf = predictTimeToFull(state.diskSeries);
+      let label;
+      if (ttf && ttf < 6 * 3600 * 1000) {
+        label = `full in ~${fmtDuration(ttf)}`;
+      } else if (freeMB < 100) {
+        label = `${freeMB}MB left!`;
+      } else {
+        label = `${percentFree}% free`;
+      }
+      return `<button class="pill-red is-clickable" data-disk-modal-open
+                title="Click to open cleanup options · ${escapeHTML(worst.path || "/")}">
+        ⚠ ${escapeHTML(label)}
+        ${diskSparkSvg()}
+      </button>`;
+    }
+
+    function wireDiskBadge() {
+      document.querySelectorAll("[data-disk-modal-open]").forEach((el) => {
+        el.addEventListener("click", openDiskModal);
+      });
+    }
+
+    // ── Disk modal (Task B) ───────────────────────────────────────────
+    function openDiskModal() {
+      state.diskModal = { open: true, pruning: false, result: null, freedBytes: null };
+      render();
+    }
+    function closeDiskModal() {
+      state.diskModal = { open: false, pruning: false, result: null, freedBytes: null };
+      render();
+    }
+    async function runDiskPrune() {
+      const before = worstDisk(state.hostDisk);
+      state.diskModal.pruning = true; state.diskModal.result = null;
+      renderDiskModal();
+      try {
+        const result = await api("POST", "/api/system/prune");
+        await loadHostDisk();
+        const after = worstDisk(state.hostDisk);
+        state.diskModal.freedBytes =
+          before && after ? Math.max(0, after.free - before.free) : null;
+        state.diskModal.result = result && typeof result === "object" ? result : { ok: true };
+      } catch (e) {
+        state.diskModal.result = { error: e.message };
+      } finally {
+        state.diskModal.pruning = false;
+        renderDiskModal();
+        await loadDF();
+      }
+    }
+    function renderDiskOverlay() {
+      if (!state.diskModal.open) return "";
+      return `<div class="modal-backdrop" data-disk-modal-backdrop>
+        <div class="modal-card" id="disk-modal-card"></div>
+      </div>`;
+    }
+    function renderDiskModal() {
+      const card = document.getElementById("disk-modal-card");
+      if (!card) return;
+      const d = state.hostDisk || {};
+      const blocks = [];
+      if (d.host) blocks.push(["Host startup volume", d.host]);
+      if (d.docker_root) blocks.push([`Docker storage (${d.docker_root.path})`, d.docker_root]);
+      const ttf = predictTimeToFull(state.diskSeries);
+      const m = state.diskModal;
+      const body = `
+        ${blocks.map(([label, b]) => {
+          const percentFree = 100 - b.percent_used;
+          const tone = diskIsLow(b) ? "text-rose-500" : (percentFree < 15 ? "text-amber-500" : "text-emerald-500");
+          return `<div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="font-medium">${escapeHTML(label)}</span>
+              <span class="mono ${tone}">${fmtBytes(b.free)} free · ${b.percent_used}% used</span>
+            </div>
+            <div class="disk-bar ${tone}"><span style="width:${b.percent_used}%"></span></div>
+          </div>`;
+        }).join("")}
+        ${ttf && ttf < 24 * 3600 * 1000
+          ? `<div class="text-rose-500 text-[12px]">⏱ At current rate, free space exhausted in ~${fmtDuration(ttf)}.</div>`
+          : ""}
+        ${(d.docker_layers_bytes || 0) > 0
+          ? `<div class="opacity-70 text-[12px]">Docker image layers on disk: ${fmtBytes(d.docker_layers_bytes)}</div>`
+          : ""}
+        ${m.result?.error
+          ? `<div class="text-rose-500">❌ ${escapeHTML(m.result.error)}</div>`
+          : m.freedBytes != null
+            ? `<div class="text-emerald-500">✅ Freed ${fmtBytes(m.freedBytes)}.</div>`
+            : `<div class="opacity-70 text-[12px]">Run <code class="mono">docker system prune</code> to remove dangling images, stopped containers, unused networks, and build cache.</div>`}
+      `;
+      card.innerHTML = `
+        <div class="modal-header">
+          <div class="flex items-center gap-2"><span>🧹</span><strong>Disk cleanup</strong></div>
+          <button class="btn" data-disk-modal-close>Close</button>
+        </div>
+        <div class="modal-body">${body}</div>
+        <div class="modal-footer">
+          <button class="btn" data-disk-modal-close>Cancel</button>
+          <button class="btn-danger" id="disk-prune-go" ${m.pruning ? "disabled" : ""}>
+            ${m.pruning ? "Pruning…" : "Run docker system prune"}
+          </button>
+        </div>`;
+      card.querySelectorAll("[data-disk-modal-close]").forEach((el) =>
+        el.addEventListener("click", closeDiskModal));
+      const go = card.querySelector("#disk-prune-go");
+      if (go) go.addEventListener("click", runDiskPrune);
+      const back = document.querySelector("[data-disk-modal-backdrop]");
+      if (back) back.addEventListener("click", (e) => {
+        if (e.target === back) closeDiskModal();
+      });
     }
 
     async function containerAction(id, action) {
@@ -747,16 +899,6 @@
       const verPill = state.health.reachable
         ? `<span class="ver-pill">engine ${escapeHTML(state.health.engine)} · ${escapeHTML(state.health.version || "?")}</span>`
         : `<span class="pill-red">engine unreachable</span>`;
-      const diskWarning = (() => {
-        if (!state.hostDisk) return "";
-        const percentFree = 100 - state.hostDisk.percent_used;
-        const freeMB = Math.round(state.hostDisk.free / (1024 * 1024));
-        if (percentFree < 5 || freeMB < 500) {
-          const label = freeMB < 100 ? `${freeMB}MB left!` : `${percentFree}% free`;
-          return `<span class="pill-red" title="Low disk space — run Dustpan to clean">⚠ ${label}</span>`;
-        }
-        return "";
-      })();
       const pullBtn = (state.view === "images")
         ? `<button class="btn-primary" data-pull-open>+ Pull image</button>`
         : "";
@@ -765,7 +907,7 @@
           <div class="flex items-center gap-2">
             <h1 class="text-lg font-semibold">${escapeHTML(titles[state.view] || "Dockyard")}</h1>
             ${verPill}
-            ${diskWarning}
+            <span data-disk-badge-slot>${renderDiskBadge()}</span>
           </div>
           ${state.lastError ? `<div class="text-rose-500 text-[12px] mt-1 mono">${escapeHTML(state.lastError)}</div>` : ""}
         </div>
@@ -801,10 +943,13 @@
     }
 
     function render() {
-      document.getElementById("app").innerHTML = renderSidebar() + renderMain() + renderLogsOverlay() + renderPullOverlay();
+      document.getElementById("app").innerHTML =
+        renderSidebar() + renderMain() + renderLogsOverlay() + renderPullOverlay() + renderDiskOverlay();
       wire();
+      wireDiskBadge();
       if (state.logs.open) renderLogs();
       if (state.pull.open) renderPull();
+      if (state.diskModal.open) renderDiskModal();
     }
 
     // ===================================================================
@@ -917,6 +1062,10 @@
       await loadSockets();
       await refresh();
       setInterval(refresh, state.refreshMs);
+      // Disk poll runs on its own (slower) tick — disk usage moves on
+      // the order of seconds-to-minutes, not the 2s container refresh.
+      loadHostDisk();
+      setInterval(loadHostDisk, state.diskPollMs);
       // Restore last view if cached
       const lastView = sessionStorage.getItem("dockyard.view");
       if (lastView) { state.view = lastView; render(); }

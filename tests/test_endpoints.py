@@ -134,6 +134,44 @@ class TestServerOnly(unittest.TestCase):
         self.assertEqual(resp.status, 200)
         self.assertTrue(body.startswith(b"<!doctype html>") or body.startswith(b"<!DOCTYPE html>"))
 
+    def test_host_disk_endpoint(self) -> None:
+        """Plan 0005 Task C — /api/host/disk returns host block with sane numbers.
+
+        Docker-less; shutil.disk_usage works on every host. docker_root may be
+        null (Colima/macOS VM case) and docker_layers_bytes may be 0 when the
+        Docker socket isn't reachable — both acceptable.
+        """
+        status, body = self._get_json("/api/host/disk")
+        self.assertEqual(status, 200)
+        self.assertIn("host", body)
+        h = body["host"]
+        self.assertGreater(h["total"], 0)
+        self.assertGreaterEqual(h["free"], 0)
+        self.assertEqual(h["used"] + h["free"], h["total"] - (h["total"] - h["used"] - h["free"]))  # sanity
+        self.assertGreaterEqual(h["percent_used"], 0)
+        self.assertLessEqual(h["percent_used"], 100)
+        # docker_root may be null when DockerRootDir lives inside a VM.
+        self.assertTrue(body["docker_root"] is None or isinstance(body["docker_root"], dict))
+        # Legacy flat fields preserved for older clients.
+        self.assertEqual(body["total"], h["total"])
+
+    def test_host_disk_snapshot_writes_file(self) -> None:
+        """Plan 0005 Task G — POST /api/host/disk/snapshot writes a debug bundle."""
+        req = urllib.request.Request(
+            self.base + "/api/host/disk/snapshot", data=b"", method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read())
+        self.assertEqual(resp.status, 200)
+        self.assertIn("path", body)
+        self.assertTrue(Path(body["path"]).exists(), f"snapshot file missing: {body['path']}")
+        self.assertGreater(body["bytes"], 0)
+        # Best-effort cleanup so /tmp doesn't fill up over many test runs.
+        try:
+            Path(body["path"]).unlink()
+        except OSError:
+            pass
+
 
 class TestEndpoints(unittest.TestCase):
     """Endpoints that DO require a reachable Docker engine."""

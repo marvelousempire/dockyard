@@ -2,9 +2,13 @@
  * Compile:  bin/tw -i web/styles/input.css -o web/static/dockyard.css
  * Watch:    bin/tw -i web/styles/input.css -o web/static/dockyard.css --watch
  * Or:       make tw-build / make tw-watch (from dockyard repo root)
+ * Boot:     bin/go compiles automatically when input.css is newer than the artifact.
  */
 
 @import "tailwindcss";
+
+/* Tell v4 where to scan for utility class names. */
+@source "../index.html";
 
 /* ───────────────────────────────────────────────────────────────────
  * Cascade layers — make our overrides predictable.
@@ -179,6 +183,86 @@
   .panel:has(.is-warn) {
     border-left: 3px solid oklch(75% 0.15 85);
   }
+
+  /* ─── SPA-specific components (migrated from inline <style>) ────────
+   * Tailwind v4 doesn't allow @apply of non-utility class names, so each
+   * variant inlines the shared utility list instead of chaining .pill / .btn.
+   * That's verbose but the standalone CLI prunes duplicates fine. */
+
+  /* Pills — base + variants. SPA sizing: gap-1 px-2 py-0.5 text-[11px]. */
+  .pill-green  { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-300; }
+  .pill-red    { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium bg-rose-500/15 text-rose-700 dark:text-rose-300; }
+  .pill-amber  { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium bg-amber-500/15 text-amber-800 dark:text-amber-300; }
+  .pill-zinc   { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium bg-zinc-500/15 text-zinc-700 dark:text-zinc-300; }
+  .pill-accent { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium;
+                 background: color-mix(in srgb, var(--dy-accent) 15%, transparent); color: var(--dy-accent); }
+
+  .pill-red.is-clickable { @apply cursor-pointer transition-colors; }
+  .pill-red.is-clickable:hover { background: color-mix(in srgb, oklch(60% 0.18 25) 25%, transparent); }
+
+  /* Buttons */
+  .btn         { @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-md border border-line dark:border-line-dark hover:bg-paper-2 dark:hover:bg-ink-2 transition-colors; }
+  .btn-primary { @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-md text-white border transition-colors;
+                 background: var(--dy-accent); border-color: var(--dy-accent); }
+  .btn-primary:hover { background: var(--dy-accent-2); }
+  .btn-danger  { @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded-md border border-line dark:border-line-dark text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors; }
+
+  /* Surfaces */
+  .surface         { @apply bg-white dark:bg-ink-2 border border-line dark:border-line-dark rounded-lg; }
+  .surface-subtle  { @apply bg-paper dark:bg-ink rounded-md; }
+
+  /* Sidebar nav */
+  .nav-item        { @apply flex items-center gap-2 px-3 py-2 rounded-md text-sm text-zinc-700 dark:text-zinc-300 hover:bg-paper-2 dark:hover:bg-ink-2 cursor-pointer transition-colors; }
+  .nav-item.active { background: color-mix(in srgb, var(--dy-accent) 12%, transparent); color: var(--dy-accent); font-weight: 500; }
+
+  /* Mono + logs */
+  .mono      { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .logs-pane { @apply text-[12px] leading-snug whitespace-pre-wrap p-3 max-h-[60vh] overflow-y-auto bg-ink text-emerald-200 dark:bg-black;
+               font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+  /* Theme segmented control */
+  .theme-seg            { @apply flex items-center rounded-md border border-line dark:border-line-dark p-0.5 text-[11px]; }
+  .theme-seg button     { @apply px-2 py-1 rounded; }
+  .theme-seg button.on  { background: var(--dy-accent); color: white; }
+
+  /* Sidebar scrollbar */
+  .sidebar::-webkit-scrollbar       { width: 6px; }
+  .sidebar::-webkit-scrollbar-thumb { background: rgba(127, 127, 127, 0.25); border-radius: 3px; }
+
+  /* Engine version pill */
+  .ver-pill { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded-full font-medium;
+              font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+              background: color-mix(in srgb, var(--dy-accent) 12%, transparent); color: var(--dy-accent); }
+
+  /* Sparklines */
+  .spark      { width: 70px; height: 22px; vertical-align: middle; }
+  .spark-cpu  { stroke: var(--dy-accent); }
+  .spark-mem  { stroke: #f59e0b; }
+  .spark-disk { stroke: #f43f5e; }            /* rose — matches the warning pill */
+  .spark-mini { width: 44px; height: 14px; vertical-align: middle; }
+
+  /* Drag-to-prune */
+  .trash-zone      { @apply border-2 border-dashed rounded-lg p-4 text-center text-sm transition-colors; border-color: var(--dy-accent); }
+  .trash-zone.over { background: color-mix(in srgb, #f43f5e 18%, transparent); border-color: #f43f5e; color: #be123c; }
+  .draggable          { @apply cursor-grab; }
+  .draggable:active   { @apply cursor-grabbing; }
+
+  /* AI assist link */
+  .ai-assist       { @apply text-[12px] flex items-center gap-1; color: var(--dy-accent); }
+  .ai-assist:hover { text-decoration: underline; }
+
+  /* ─── Disk modal (Task B) ────────────────────────────────────────── */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45);
+                    z-index: 50; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+  .modal-card     { @apply bg-white dark:bg-ink-2 border border-line dark:border-line-dark rounded-lg shadow-xl;
+                    max-width: 32rem; width: 100%; }
+  .modal-header   { @apply px-4 py-3 border-b border-line dark:border-line-dark flex items-center justify-between; }
+  .modal-body     { @apply px-4 py-3 space-y-3 text-sm; }
+  .modal-footer   { @apply px-4 py-3 border-t border-line dark:border-line-dark flex items-center justify-end gap-2; }
+
+  .disk-bar       { display: block; width: 100%; height: 8px; border-radius: 4px;
+                    background: color-mix(in srgb, currentColor 12%, transparent); overflow: hidden; }
+  .disk-bar > span { display: block; height: 100%; background: currentColor; transition: width var(--dur-base) ease; }
 }
 
 /* ───────────────────────────────────────────────────────────────────

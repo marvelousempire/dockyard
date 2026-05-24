@@ -15,7 +15,10 @@
     "refresh_ms": 2000,
     "logs_tail_lines": 200,
     "sparkline_seconds": 30,
-    "show_ai_assist": true
+    "show_ai_assist": true,
+    "disk_warn_percent": 5,
+    "disk_warn_mb": 500,
+    "disk_warn_poll_seconds": 10
   },
   "_comment": "socket=auto probes Colima -> OrbStack -> Docker Desktop -> /var/run/docker.sock. Set to an explicit path to pin (e.g. /Users/you/.colima/team/docker.sock)."
 }
