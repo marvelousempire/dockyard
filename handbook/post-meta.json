@@ -1,0 +1,10 @@
+{
+  "ID": "dockyard-handbook",
+  "post_title": "dockyard Handbook",
+  "post_name": "dockyard-handbook",
+  "post_status": "publish",
+  "post_type": "handbook",
+  "meta": {
+    "entity_id": "dockyard"
+  }
+}
