@@ -1,0 +1,177 @@
+---
+description: Every Makefile target that depends on an external toolchain must declare a preflight-* prereq that hard-fails with a clear install hint when the tool is missing. Cross-platform Mac+Linux.
+globs:
+alwaysApply: true
+---
+
+# Makefile toolchain preflight — every operator app, every target, every time
+
+## The verbatim source (stated by Avery 2026-05-24)
+
+> "this should have upon running the make file - a check shold be implemented for this and the put in place if not there for future runners on a new system and for any additioal upgrades we make to the app. its a rule."
+
+Said immediately after `make ui` on this machine died with a cryptic message because the Rust toolchain wasn't installed yet:
+
+```
+failed to run 'cargo metadata' command to get workspace directory:
+failed to run command cargo metadata --no-deps --format-version 1:
+No such file or directory (os error 2)
+```
+
+A fresh-machine operator should never see that error. The Makefile knows it needs cargo — it should say so in plain English and point at the fix.
+
+## The rule
+
+Every `make` target in every operator app that depends on an external toolchain MUST:
+
+1. **Declare its toolchain deps explicitly** via a `preflight-*` prerequisite target — `preflight-rust`, `preflight-python`, `preflight-node-pnpm`, `preflight-tauri`, `preflight-ios`, `preflight-launchctl`, etc.
+2. **Hard-fail before the underlying tool runs** when a required toolchain is missing, with a chrome-block message naming the tool, why it's needed, and the **one-line install command**.
+3. **Offer a scripted bootstrap** at `scripts/stack/bootstrap-<tool>.sh` for any toolchain that has a non-trivial install path (Rust). The bootstrap script is **opt-in** — preflight points at it; the operator runs it. When stdin is a TTY, preflight may prompt y/N to run it inline. **Never auto-mutate operator state without consent** (sister rule: [`contracts-and-prudence`](contracts-and-prudence.md)).
+4. **Stay fast** — preflight on the happy path must add <100ms to every `make` invocation. No network calls, no version downloads, no GitHub queries. Pure `command -v` checks.
+5. **Be cross-platform Mac + Linux**, with OS detection via `uname -s`. Mac-specific checks (Xcode CLT, launchctl) are gated by `Darwin`; Linux fallbacks (apt/dnf hints, systemctl) are gated by `Linux`. Windows is explicitly out of scope.
+
+## When this fires
+
+- Adding a new `make` target that shells out to a toolchain
+- Adding a new toolchain dependency to an existing target (e.g. introducing Tauri to a previously pure-JS app)
+- Bumping an existing toolchain's minimum version (`node >= 20` → `node >= 22`)
+- Reviewing a PR that adds a Makefile target without a `preflight-*` prerequisite
+- A fresh-machine bootstrap failed with a cryptic underlying-tool error — that's the smoke; this rule is the fire extinguisher
+
+## When this does NOT fire
+
+- `make` targets that only invoke other `make` targets (the inner target's preflight covers it)
+- One-off helper scripts in `scripts/` that aren't wired into a `make` target (they get their own `command -v` checks if interactive, but no preflight wrapper)
+- Repos with no `Makefile` at all (e.g. pure-docs repos like Historia in docs-only mode)
+
+## The canonical pattern (already shipped in `automata`)
+
+### Preflight script — `scripts/stack/preflight.sh`
+
+One script, one positional arg per toolchain to check. Supported toolchain names:
+
+| Name | Checks | Cross-platform |
+|------|--------|----------------|
+| `rust` | `cargo` + `rustc` on PATH | Mac + Linux |
+| `python` | `python3` on PATH | Mac + Linux |
+| `node-pnpm` | `node -v` >= 20 AND `pnpm` on PATH | Mac + Linux |
+| `tauri` | `pnpm exec tauri --version` succeeds in `apps/pad-desktop` | Mac + Linux |
+| `xcode-clt` | `xcode-select -p` succeeds (macOS only — silent pass on Linux) | Mac |
+| `launchctl` | `launchctl` on macOS, `systemctl` on Linux | Mac + Linux |
+
+Exit 0 on every-tool-present (silent, no stdout). Exit 1 on any miss, with a chrome block per missing tool plus an interactive y/N bootstrap prompt when stdin is a TTY.
+
+### Bootstrap scripts — `scripts/stack/bootstrap-<tool>.sh`
+
+- **`bootstrap-rust.sh`** — non-interactive `sh.rustup.rs -y --default-toolchain stable --profile minimal`. Native arm64 on Apple Silicon, native everything on Linux. Idempotent (exits 0 if cargo already present). Modifies `~/.zshenv`/`~/.profile` via rustup's own installer.
+- **`bootstrap-python.sh`** — prints OS-appropriate install hint (`brew install python@3.12` on Darwin, `apt`/`dnf`/`pacman` on Linux). Does NOT auto-install — Python's install fragmentation makes auto-choosing surprising.
+
+Other toolchains (node/pnpm, Xcode CLT, launchctl, Tauri CLI) get hints only — their install paths are too situational to safely script.
+
+### Makefile wiring
+
+```makefile
+.PHONY: preflight preflight-rust preflight-python preflight-node-pnpm preflight-tauri preflight-ios preflight-launchctl
+
+preflight-rust:      ; @bash scripts/stack/preflight.sh rust
+preflight-python:    ; @bash scripts/stack/preflight.sh python
+preflight-node-pnpm: ; @bash scripts/stack/preflight.sh node-pnpm
+preflight-tauri:     preflight-node-pnpm ; @bash scripts/stack/preflight.sh tauri
+preflight-ios:       preflight-rust       ; @bash scripts/stack/preflight.sh xcode-clt
+preflight-launchctl: ; @bash scripts/stack/preflight.sh launchctl
+preflight: preflight-node-pnpm preflight-python preflight-rust preflight-tauri
+	@echo "✓ preflight passed."
+
+# Targets declare their toolchain deps via the preflight prerequisites:
+ui:              preflight-rust preflight-node-pnpm api
+ui-ios-init:     preflight-rust preflight-node-pnpm preflight-ios
+ui-ios-dev:      preflight-rust preflight-node-pnpm preflight-ios
+ui-ios-build:    preflight-rust preflight-node-pnpm preflight-ios
+api:             preflight-python
+pad-build:       preflight-node-pnpm
+test:            preflight-node-pnpm
+slice:           preflight-node-pnpm
+doctor:          preflight-node-pnpm
+ui-local:        preflight-node-pnpm api
+ui-preview:      preflight-node-pnpm pad-build
+ui-lan:          preflight-node-pnpm preflight-python
+ui-pwa:          preflight-node-pnpm preflight-python pad-build
+install-cron:    preflight-launchctl
+uninstall-cron:  preflight-launchctl
+```
+
+### `make doctor` is the comprehensive consumer
+
+`scripts/doctor.mjs` calls `preflight.sh rust python node-pnpm` first, then layers project-specific checks (build artifacts, git remote, disk headroom, API port, pinned Tauri CLI version). Preflight stays fast and pure; doctor is the operator's "is everything healthy?" command.
+
+## Examples
+
+### ✓ Compliant — automata 2.20.0 (this PR)
+
+Fresh-machine `make ui` with no Rust installed now prints:
+
+```
+┌─ automata preflight · missing toolchain ─────────────────┐
+│  Tool        Rust (cargo + rustc)
+│  Why needed  Tauri build · make ui · make ui-ios-*
+│  Install:
+│
+│  bash scripts/stack/bootstrap-rust.sh        # native arm64 / arm64-linux / x86_64 (auto)
+│
+│  After install, open a new terminal or:
+│      . "$HOME/.cargo/env"
+└──────────────────────────────────────────────────────────┘
+
+  Run bootstrap_rust now? [y/N]
+```
+
+…and exits 1 before `pnpm tauri dev` ever fires.
+
+### ✗ Violation — automata before 2.20.0 (2026-05-24 incident)
+
+`make ui` on a fresh machine produced:
+
+```
+failed to run 'cargo metadata' command to get workspace directory:
+failed to run command cargo metadata --no-deps --format-version 1:
+No such file or directory (os error 2)
+```
+
+…with no hint that the fix is `curl https://sh.rustup.rs | sh`. The operator had to know to look for `cargo`, then know `rustup` is the install path, then know about Apple Silicon native vs Rosetta. This rule's existence is the prevention of the next re-discovery of that path.
+
+### ✗ Violation — adding a target that shells out to `ffmpeg` without `preflight-ffmpeg`
+
+```makefile
+video-encode:
+	@ffmpeg -i input.mov out.mp4   # no preflight — fresh machine sees "ffmpeg: command not found"
+```
+
+Compliant version:
+
+```makefile
+preflight-ffmpeg: ; @bash scripts/stack/preflight.sh ffmpeg
+video-encode: preflight-ffmpeg
+	@ffmpeg -i input.mov out.mp4
+```
+
+Plus a new `check_ffmpeg` + `hint_ffmpeg` block in `preflight.sh`.
+
+## Why
+
+Cryptic toolchain errors are a silent tax on every fresh-machine onboarding. They look like "the project is broken" instead of "you need to install $TOOL." The few seconds the operator spends seeing `cargo: command not found` is a fraction of the time spent then googling, finding rustup, debating brew-vs-curl, picking arm64-vs-x86_64, etc. — a 30-second decision becomes a 30-minute investigation.
+
+Preflight + bootstrap turns that 30 minutes into 30 seconds: missing tool is named, the install command is one paste, the script is opt-in. Every future fresh-machine bootstrap of every operator app benefits forever after.
+
+## Propagation
+
+Per [`rule-propagation-discipline.md`](rule-propagation-discipline.md), this rule body lives in every operator-built repo's `.claude/rules/` + `.cursor/rules/` and the AI Skills Library. The IMPLEMENTATION (the actual `preflight.sh` + `bootstrap-*.sh` + Makefile wiring) lands in each repo's own PR when the rule is adopted there.
+
+## Related
+
+- **Plan:** [`plans/0136-makefile-toolchain-preflight.md`](../../plans/0136-makefile-toolchain-preflight.md) — the rollout that adopted this rule
+- **Reference impl:** [`scripts/stack/preflight.sh`](../../scripts/stack/preflight.sh), [`scripts/stack/bootstrap-rust.sh`](../../scripts/stack/bootstrap-rust.sh), [`scripts/stack/bootstrap-python.sh`](../../scripts/stack/bootstrap-python.sh), [`scripts/doctor.mjs`](../../scripts/doctor.mjs), [`Makefile`](../../Makefile)
+- **Sister rule:** [`apple-native-scripting-preference`](apple-native-scripting-preference.md) — bootstrap-rust.sh IS the scripted form
+- **Sister rule:** [`contracts-and-prudence`](contracts-and-prudence.md) — preflight prompts before mutating, never silently installs
+- **Sister rule:** [`rule-propagation-discipline`](rule-propagation-discipline.md) — propagation playbook
+- **Sister rule:** [`version-bump-and-changelog`](version-bump-and-changelog.md) — this rule's adoption ships as v2.20.0
+- **Sister rule:** [`cli-only-no-gh-actions`](cli-only-no-gh-actions.md) — no auto-firing workflows added
