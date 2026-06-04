@@ -98,8 +98,28 @@ def docker_stream(
 # ---------------------------------------------------------------------------
 
 
+# ── Network-mode token gate (nephew Plan 0140 Phase 3) ───────────────
+# Loopback is trusted (the DGX-local dashboard). This dashboard can
+# stop/restart/prune Docker containers, so any NON-loopback request MUST present
+# `Authorization: Bearer $DOCKYARD_API_TOKEN`. Fail CLOSED: if the token env is
+# unset, every network request is denied — never network-exposed unauthenticated.
+_DOCKYARD_API_TOKEN = os.environ.get("DOCKYARD_API_TOKEN", "").strip()
+
+
+def _is_loopback(host: str) -> bool:
+    return host in ("127.0.0.1", "::1", "localhost", "")
+
+
 class DockyardHandler(BaseHTTPRequestHandler):
     server_version = "Dockyard/0.2.0"
+
+    def _auth_ok(self) -> bool:
+        host = self.client_address[0] if self.client_address else ""
+        if _is_loopback(host):
+            return True
+        if not _DOCKYARD_API_TOKEN:
+            return False
+        return self.headers.get("Authorization", "") == f"Bearer {_DOCKYARD_API_TOKEN}"
 
     # injected from server attrs
     socket_path: str
@@ -115,6 +135,8 @@ class DockyardHandler(BaseHTTPRequestHandler):
     # ----- routing -----
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self._auth_ok():
+            return self._send_json(401, {"error": "unauthorized — network access requires a token"})
         path, query = self._split_path()
         try:
             if path == "/" or path == "/index.html":
@@ -162,6 +184,8 @@ class DockyardHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": str(e)})
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._auth_ok():
+            return self._send_json(401, {"error": "unauthorized — network access requires a token"})
         path, query = self._split_path()
         try:
             if path.startswith("/api/containers/") and path.endswith("/start"):
@@ -197,6 +221,8 @@ class DockyardHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": str(e)})
 
     def do_DELETE(self) -> None:  # noqa: N802
+        if not self._auth_ok():
+            return self._send_json(401, {"error": "unauthorized — network access requires a token"})
         path, query = self._split_path()
         try:
             if path.startswith("/api/containers/"):
