@@ -1,0 +1,36 @@
+# Verify workflow template — copy to `<repo>/.gitea/workflows/verify.yaml`
+# Host runner: native git checkout (actions/checkout needs node on act host jobs).
+
+name: Verify
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  nephew-verify:
+    name: nephew-verify ship gate
+    runs-on: nephew-spark
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (git)
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}"
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          if ! git rev-parse HEAD >/dev/null 2>&1; then
+            git init .
+            git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          fi
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout -f FETCH_HEAD
+
+      - name: make nephew-verify
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}"
+          export PATH="/home/abrownsanta/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:${PATH}"
+          pnpm install --ignore-workspace --frozen-lockfile
+          make nephew-verify || make test || npm test
