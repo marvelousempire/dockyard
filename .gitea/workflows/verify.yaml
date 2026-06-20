@@ -13,18 +13,28 @@ jobs:
   nephew-verify:
     name: nephew-verify ship gate
     runs-on: nephew-spark
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - name: Checkout (git)
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}"
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          # Abort a stalled transfer instead of pinning a runner slot forever
+          # (shared template fix; see red-e-play-app docs/Issue-Log 2026-06-20).
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 60
           if ! git rev-parse HEAD >/dev/null 2>&1; then
             git init .
             git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           fi
-          git fetch --depth=1 origin "${GITHUB_SHA}"
+          ok=0
+          for attempt in 1 2 3; do
+            if timeout 180 git fetch --depth=1 origin "${GITHUB_SHA}"; then ok=1; break; fi
+            echo "::warning::git fetch attempt ${attempt} timed out; retrying"
+            sleep 5
+          done
+          [ "$ok" = "1" ] || { echo "::error::checkout failed after 3 attempts"; exit 1; }
           git checkout -f FETCH_HEAD
 
       - name: make nephew-verify
