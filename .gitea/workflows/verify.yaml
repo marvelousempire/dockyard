@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout (git)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}"
@@ -24,9 +26,15 @@ jobs:
           # (shared template fix; see red-e-play-app docs/Issue-Log 2026-06-20).
           git config --global http.lowSpeedLimit 1000
           git config --global http.lowSpeedTime 60
+          # Authenticate: act_runner host jobs don't inject git creds, and
+          # GITHUB_TOKEN isn't auto-exported to run steps. Embed the per-job
+          # token in the remote. See red-e-play-app docs/Issue-Log 2026-06-20.
+          export GIT_TERMINAL_PROMPT=0
+          if [ -z "${GITHUB_TOKEN:-}" ]; then echo "::error::GITHUB_TOKEN is empty"; exit 1; fi
+          AUTHED="$(printf '%s' "${GITHUB_SERVER_URL}" | sed -E "s#^(https?)://#\\1://oauth2:${GITHUB_TOKEN}@#")/${GITHUB_REPOSITORY}.git"
           if ! git rev-parse HEAD >/dev/null 2>&1; then
             git init .
-            git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+            git remote add origin "${AUTHED}"
           fi
           ok=0
           for attempt in 1 2 3; do
